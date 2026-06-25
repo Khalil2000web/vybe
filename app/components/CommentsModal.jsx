@@ -2,17 +2,18 @@
 
 import { Fragment, useEffect, useState } from "react";
 import { Dialog, Transition } from "@headlessui/react";
-import { createClient } from "@/app/lib/supabase/client";
 import Link from "next/link";
+import { LockKeyhole, SendHorizonal, Trash2, X } from "lucide-react";
+import { createClient } from "@/app/lib/supabase/client";
 import TimeAgo from "@/app/components/TimeAgo";
-import { SendHorizonal, Trash2, X } from "lucide-react";
 
 export default function CommentsModal({
-  open,
+  isOpen,
   onClose,
   postId,
   postOwnerId,
   currentUserId,
+  commentsStatus = "open",
   onCommentAdded,
   onCommentDeleted,
 }) {
@@ -20,66 +21,54 @@ export default function CommentsModal({
 
   const [comments, setComments] = useState([]);
   const [body, setBody] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
 
-  async function loadComments() {
-    if (!postId) return;
-
-    setLoading(true);
-    setError("");
-
-    const { data, error: commentsError } = await supabase
-      .from("comments")
-      .select(
-        `
-        *,
-        profiles:user_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `
-      )
-      .eq("post_id", postId)
-      .order("created_at", { ascending: true });
-
-    if (commentsError) {
-      setError(commentsError.message);
-    } else {
-      setComments(data || []);
-    }
-
-    setLoading(false);
-  }
+  const commentsClosed = commentsStatus === "closed";
 
   useEffect(() => {
-    if (open) {
-      loadComments();
+    if (!isOpen || !postId) return;
+
+    async function loadComments() {
+      setLoading(true);
+      setError("");
+
+      const { data, error: commentsError } = await supabase
+        .from("comments")
+        .select(
+          `
+          *,
+          profiles:user_id (
+            id,
+            username,
+            display_name,
+            avatar_url
+          )
+        `
+        )
+        .eq("post_id", postId)
+        .order("created_at", { ascending: true });
+
+      if (commentsError) {
+        setError(commentsError.message);
+        setLoading(false);
+        return;
+      }
+
+      setComments(data || []);
+      setLoading(false);
     }
-  }, [open, postId]);
 
-  async function createCommentNotification() {
-    if (!currentUserId || !postOwnerId || currentUserId === postOwnerId) return;
-
-    await supabase.from("notifications").insert({
-      user_id: postOwnerId,
-      actor_id: currentUserId,
-      post_id: postId,
-      type: "comment",
-    });
-  }
+    loadComments();
+  }, [isOpen, postId, supabase]);
 
   async function addComment(e) {
     e.preventDefault();
 
-    const cleanBody = body.trim();
+    if (!currentUserId || !body.trim() || working || commentsClosed) return;
 
-    if (!cleanBody || !currentUserId || sending) return;
-
-    setSending(true);
+    setWorking(true);
     setError("");
 
     const { data, error: insertError } = await supabase
@@ -87,7 +76,7 @@ export default function CommentsModal({
       .insert({
         post_id: postId,
         user_id: currentUserId,
-        body: cleanBody,
+        body: body.trim().slice(0, 300),
       })
       .select(
         `
@@ -104,20 +93,24 @@ export default function CommentsModal({
 
     if (insertError) {
       setError(insertError.message);
-      setSending(false);
+      setWorking(false);
       return;
     }
 
     setComments((current) => [...current, data]);
     setBody("");
-    await createCommentNotification();
+    setWorking(false);
     onCommentAdded?.();
-    setSending(false);
   }
 
   async function deleteComment(commentId) {
+    if (!currentUserId || working) return;
+
     const ok = window.confirm("Delete this comment?");
     if (!ok) return;
+
+    setWorking(true);
+    setError("");
 
     const { error: deleteError } = await supabase
       .from("comments")
@@ -127,15 +120,20 @@ export default function CommentsModal({
 
     if (deleteError) {
       setError(deleteError.message);
+      setWorking(false);
       return;
     }
 
-    setComments((current) => current.filter((comment) => comment.id !== commentId));
+    setComments((current) =>
+      current.filter((comment) => comment.id !== commentId)
+    );
+
+    setWorking(false);
     onCommentDeleted?.();
   }
 
   return (
-    <Transition appear show={open} as={Fragment}>
+    <Transition appear show={isOpen} as={Fragment}>
       <Dialog as="div" className="relative z-50" onClose={onClose}>
         <Transition.Child
           as={Fragment}
@@ -160,127 +158,133 @@ export default function CommentsModal({
               leaveFrom="opacity-100 translate-y-0 sm:scale-100"
               leaveTo="opacity-0 translate-y-8 sm:scale-95"
             >
-              <Dialog.Panel className="card flex h-[82vh] w-full max-w-xl flex-col overflow-hidden p-0">
+              <Dialog.Panel className="card max-h-[85vh] w-full max-w-lg overflow-hidden p-0">
                 <div className="flex items-center justify-between border-b border-white/10 p-4">
-                  <Dialog.Title className="text-xl font-black">
-                    Comments
-                  </Dialog.Title>
+                  <div>
+                    <Dialog.Title className="text-2xl font-black">
+                      Comments
+                    </Dialog.Title>
+
+                    {commentsClosed && (
+                      <p className="mt-1 flex items-center gap-2 text-sm text-white/45">
+                        <LockKeyhole size={14} />
+                        Comments are closed
+                      </p>
+                    )}
+                  </div>
 
                   <button
                     onClick={onClose}
-                    className="rounded-full p-2 text-white/60 hover:bg-white/10 hover:text-white"
+                    className="rounded-full p-2 text-white/60 hover:bg-white/10"
                   >
                     <X size={20} />
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4">
+                <div className="max-h-[55vh] space-y-3 overflow-y-auto p-4">
                   {loading ? (
-                    <p className="text-center text-white/45">Loading comments...</p>
+                    <p className="text-center text-white/45">Loading...</p>
                   ) : comments.length === 0 ? (
-                    <div className="flex h-full items-center justify-center text-center">
-                      <div>
-                        <h3 className="text-2xl font-black">No comments yet</h3>
-                        <p className="mt-2 text-white/45">
-                          Be the first one to comment.
-                        </p>
-                      </div>
-                    </div>
+                    <p className="text-center text-white/45">
+                      No comments yet.
+                    </p>
                   ) : (
-                    <div className="space-y-4">
-                      {comments.map((comment) => {
-                        const author = comment.profiles;
-                        const isOwner = currentUserId === comment.user_id;
+                    comments.map((comment) => {
+                      const author = comment.profiles;
+                      const isOwnComment = comment.user_id === currentUserId;
 
-                        return (
-                          <div key={comment.id} className="flex gap-3">
+                      return (
+                        <div
+                          key={comment.id}
+                          className="rounded-[22px] border border-white/10 bg-white/[0.04] p-3"
+                        >
+                          <div className="flex items-start justify-between gap-3">
                             <Link
-                              href={`/@${author?.username}`}
-                              onClick={onClose}
-                              className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10"
+                              href={
+                                author?.username ? `/@${author.username}` : "/"
+                              }
+                              className="flex min-w-0 items-center gap-3"
                             >
-                              {author?.avatar_url ? (
-                                <img
-                                  src={author.avatar_url}
-                                  alt=""
-                                  className="h-full w-full pointer-events-none object-cover"
-                                />
-                              ) : (
-                                <span className="text-sm font-bold">
-                                  {(author?.display_name || author?.username || "?")
+                              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10 text-sm font-bold">
+                                {author?.avatar_url ? (
+                                  <img
+                                    src={author.avatar_url}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  (author?.display_name ||
+                                    author?.username ||
+                                    "?")
                                     ?.charAt(0)
-                                    ?.toUpperCase()}
-                                </span>
-                              )}
-                            </Link>
-
-                            <div className="min-w-0 flex-1 rounded-2xl bg-white/[0.045] p-3">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <Link
-                                    href={`/@${author?.username}`}
-                                    onClick={onClose}
-                                    className="font-bold hover:underline"
-                                  >
-                                    {author?.display_name || author?.username}
-                                  </Link>
-
-                                  <p className="text-xs text-white/40">
-  @{author?.username} · <TimeAgo date={comment.created_at} />
-</p>
-                                </div>
-
-                                {isOwner && (
-                                  <button
-                                    onClick={() => deleteComment(comment.id)}
-                                    className="shrink-0 rounded-full p-2 text-red-300 hover:bg-red-500/10"
-                                  >
-                                    <Trash2 size={15} />
-                                  </button>
+                                    ?.toUpperCase()
                                 )}
                               </div>
 
-                              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-white/85">
-                                {comment.body}
-                              </p>
-                            </div>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold">
+                                  {author?.display_name ||
+                                    author?.username ||
+                                    "Unknown"}
+                                </p>
+
+                                <p className="truncate text-xs text-white/40">
+                                  @{author?.username || "unknown"} ·{" "}
+                                  <TimeAgo date={comment.created_at} />
+                                </p>
+                              </div>
+                            </Link>
+
+                            {isOwnComment && (
+                              <button
+                                onClick={() => deleteComment(comment.id)}
+                                disabled={working}
+                                className="rounded-full p-2 text-white/40 hover:bg-red-500/10 hover:text-red-200"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            )}
                           </div>
-                        );
-                      })}
-                    </div>
+
+                          <p className="mt-3 whitespace-pre-wrap break-words text-sm text-white/80">
+                            {comment.body}
+                          </p>
+                        </div>
+                      );
+                    })
                   )}
 
                   {error && (
-                    <p className="mt-4 rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-200">
+                    <p className="rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-200">
                       {error}
                     </p>
                   )}
                 </div>
 
-                <form onSubmit={addComment} className="border-t border-white/10 p-3">
-                  {!currentUserId ? (
-                    <Link href="/auth/login" className="btn btn-primary w-full">
-                      Log in to comment
-                    </Link>
+                <div className="border-t border-white/10 p-4">
+                  {commentsClosed ? (
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-center text-sm text-white/50">
+                      New comments are not allowed on this post.
+                    </div>
                   ) : (
-                    <div className="flex gap-2">
+                    <form onSubmit={addComment} className="flex gap-2">
                       <input
-                        className="field min-h-12 flex-1"
+                        className="field min-h-11 flex-1"
                         value={body}
                         onChange={(e) => setBody(e.target.value)}
-                        placeholder="Write a comment..."
                         maxLength={300}
+                        placeholder="Write a comment..."
                       />
 
                       <button
-                        disabled={!body.trim() || sending}
-                        className="btn btn-primary aspect-square min-h-12 px-0"
+                        disabled={!body.trim() || working}
+                        className="btn btn-primary min-h-11 px-4"
                       >
-                        <SendHorizonal size={18} />
+                        <SendHorizonal size={16} />
                       </button>
-                    </div>
+                    </form>
                   )}
-                </form>
+                </div>
               </Dialog.Panel>
             </Transition.Child>
           </div>

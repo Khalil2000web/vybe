@@ -1,32 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClient } from "@/app/lib/supabase/client";
-import { useRouter } from "next/navigation";
-import TimeAgo from "@/app/components/TimeAgo";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Dialog, Transition } from "@headlessui/react";
+import { useRouter } from "next/navigation";
 import {
   Bookmark,
+  Edit3,
   Heart,
   MessageCircle,
+  MessageCircleOff,
+  MoreHorizontal,
+  Share2,
   Trash2,
+  X,
 } from "lucide-react";
-import CommentsModal from "./CommentsModal";
+import { createClient } from "@/app/lib/supabase/client";
+import CommentsModal from "@/app/components/CommentsModal";
+import TimeAgo from "@/app/components/TimeAgo";
+import PostMediaCarousel from "@/app/components/PostMediaCarousel";
 
-function parseStoragePath(mediaUrl) {
-  if (!mediaUrl) return null;
+function getMediaItems(post) {
+  const mediaFromTable = Array.isArray(post?.post_media)
+    ? [...post.post_media]
+        .filter((item) => item.media_url && item.media_type)
+        .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+    : [];
 
-  try {
-    const url = new URL(mediaUrl);
-    const marker = "/storage/v1/object/public/post-media/";
-    const index = url.pathname.indexOf(marker);
+  if (mediaFromTable.length > 0) return mediaFromTable;
 
-    if (index === -1) return null;
-
-    return decodeURIComponent(url.pathname.slice(index + marker.length));
-  } catch {
-    return null;
+  if (post?.media_url && post?.media_type) {
+    return [
+      {
+        id: `${post.id}-single-media`,
+        media_url: post.media_url,
+        media_type: post.media_type,
+        sort_order: 0,
+        synthetic: true,
+      },
+    ];
   }
+
+  return [];
 }
 
 export default function PostCard({
@@ -39,101 +54,82 @@ export default function PostCard({
   const router = useRouter();
   const supabase = createClient();
 
-  const author = post.profiles;
-  const isOwner = currentUserId === post.user_id;
+  const [localPost, setLocalPost] = useState(post);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+
+  const author = localPost.profiles;
+  const mediaItems = useMemo(() => getMediaItems(localPost), [localPost]);
 
   const [likesCount, setLikesCount] = useState(0);
   const [commentsCount, setCommentsCount] = useState(0);
   const [liked, setLiked] = useState(false);
   const [saved, setSaved] = useState(false);
-
-  const [loadingActions, setLoadingActions] = useState(true);
-  const [working, setWorking] = useState(false);
   const [commentsOpen, setCommentsOpen] = useState(false);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
 
-  async function loadActions() {
-    setLoadingActions(true);
+  const [editBody, setEditBody] = useState(localPost.body || "");
+  const [mediaToRemove, setMediaToRemove] = useState([]);
 
-    const [
-      likesCountResult,
-      commentsCountResult,
-      likedResult,
-      savedResult,
-    ] = await Promise.all([
-      supabase
-        .from("post_likes")
-        .select("*", { count: "exact", head: true })
-        .eq("post_id", post.id),
-
-      supabase
-        .from("comments")
-        .select("*", { count: "exact", head: true })
-        .eq("post_id", post.id),
-
-      currentUserId
-        ? supabase
-            .from("post_likes")
-            .select("post_id")
-            .eq("post_id", post.id)
-            .eq("user_id", currentUserId)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-
-      currentUserId
-        ? supabase
-            .from("saved_posts")
-            .select("post_id")
-            .eq("post_id", post.id)
-            .eq("user_id", currentUserId)
-            .maybeSingle()
-        : Promise.resolve({ data: null }),
-    ]);
-
-    setLikesCount(likesCountResult.count || 0);
-    setCommentsCount(commentsCountResult.count || 0);
-    setLiked(Boolean(likedResult.data));
-    setSaved(Boolean(savedResult.data));
-
-    setLoadingActions(false);
-  }
+  const isOwner = currentUserId && localPost.user_id === currentUserId;
+  const commentsClosed = localPost.comments_status === "closed";
 
   useEffect(() => {
-    loadActions();
-  }, [post.id, currentUserId]);
+    setLocalPost(post);
+    setEditBody(post.body || "");
+    setMediaToRemove([]);
+  }, [post]);
 
-  function requireLogin() {
-    if (!currentUserId) {
-      router.push("/auth/login");
-      return false;
+  useEffect(() => {
+    async function loadStats() {
+      const [likesResult, commentsResult, likedResult, savedResult] =
+        await Promise.all([
+          supabase
+            .from("post_likes")
+            .select("*", { count: "exact", head: true })
+            .eq("post_id", localPost.id),
+
+          supabase
+            .from("comments")
+            .select("*", { count: "exact", head: true })
+            .eq("post_id", localPost.id),
+
+          currentUserId
+            ? supabase
+                .from("post_likes")
+                .select("post_id")
+                .eq("post_id", localPost.id)
+                .eq("user_id", currentUserId)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+
+          currentUserId
+            ? supabase
+                .from("saved_posts")
+                .select("post_id")
+                .eq("post_id", localPost.id)
+                .eq("user_id", currentUserId)
+                .maybeSingle()
+            : Promise.resolve({ data: null }),
+        ]);
+
+      setLikesCount(likesResult.count || 0);
+      setCommentsCount(commentsResult.count || 0);
+      setLiked(Boolean(likedResult.data));
+      setSaved(Boolean(savedResult.data));
     }
 
-    return true;
-  }
-
-  async function createLikeNotification() {
-    if (!currentUserId || currentUserId === post.user_id) return;
-
-    const { data: existing } = await supabase
-      .from("notifications")
-      .select("id")
-      .eq("user_id", post.user_id)
-      .eq("actor_id", currentUserId)
-      .eq("post_id", post.id)
-      .eq("type", "like")
-      .maybeSingle();
-
-    if (existing) return;
-
-    await supabase.from("notifications").insert({
-      user_id: post.user_id,
-      actor_id: currentUserId,
-      post_id: post.id,
-      type: "like",
-    });
-  }
+    loadStats();
+  }, [localPost.id, currentUserId, supabase]);
 
   async function toggleLike() {
-    if (!requireLogin() || working) return;
+    if (!currentUserId) {
+      router.push("/auth/login");
+      return;
+    }
+
+    if (working) return;
 
     setWorking(true);
 
@@ -141,31 +137,40 @@ export default function PostCard({
       const { error } = await supabase
         .from("post_likes")
         .delete()
-        .eq("post_id", post.id)
+        .eq("post_id", localPost.id)
         .eq("user_id", currentUserId);
 
       if (!error) {
         setLiked(false);
         setLikesCount((count) => Math.max(0, count - 1));
+        onChanged?.();
       }
-    } else {
-      const { error } = await supabase.from("post_likes").insert({
-        post_id: post.id,
-        user_id: currentUserId,
-      });
 
-      if (!error) {
-        setLiked(true);
-        setLikesCount((count) => count + 1);
-        await createLikeNotification();
-      }
+      setWorking(false);
+      return;
+    }
+
+    const { error } = await supabase.from("post_likes").insert({
+      post_id: localPost.id,
+      user_id: currentUserId,
+    });
+
+    if (!error) {
+      setLiked(true);
+      setLikesCount((count) => count + 1);
+      onChanged?.();
     }
 
     setWorking(false);
   }
 
   async function toggleSave() {
-    if (!requireLogin() || working) return;
+    if (!currentUserId) {
+      router.push("/auth/login");
+      return;
+    }
+
+    if (working) return;
 
     setWorking(true);
 
@@ -173,23 +178,26 @@ export default function PostCard({
       const { error } = await supabase
         .from("saved_posts")
         .delete()
-        .eq("post_id", post.id)
+        .eq("post_id", localPost.id)
         .eq("user_id", currentUserId);
 
       if (!error) {
-  setSaved(false);
-  onSavedChange?.(false, post.id);
-}
-    } else {
-      const { error } = await supabase.from("saved_posts").insert({
-        post_id: post.id,
-        user_id: currentUserId,
-      });
+        setSaved(false);
+        onSavedChange?.(false, localPost.id);
+      }
 
-if (!error) {
-  setSaved(true);
-  onSavedChange?.(true, post.id);
-}
+      setWorking(false);
+      return;
+    }
+
+    const { error } = await supabase.from("saved_posts").insert({
+      post_id: localPost.id,
+      user_id: currentUserId,
+    });
+
+    if (!error) {
+      setSaved(true);
+      onSavedChange?.(true, localPost.id);
     }
 
     setWorking(false);
@@ -203,140 +211,272 @@ if (!error) {
 
     setWorking(true);
 
-    const mediaPath = parseStoragePath(post.media_url);
+    const response = await fetch(`/api/posts/${localPost.id}`, {
+      method: "DELETE",
+    });
 
-    const { error } = await supabase
-      .from("posts")
-      .delete()
-      .eq("id", post.id)
-      .eq("user_id", currentUserId);
+    const result = await response.json().catch(() => ({}));
 
-    if (error) {
-      alert(error.message);
+    if (!response.ok) {
+      setError(result.error || "Failed to delete post.");
       setWorking(false);
       return;
     }
 
-    if (mediaPath) {
-      await supabase.storage.from("post-media").remove([mediaPath]);
+    onDeleted?.(localPost.id);
+    router.refresh();
+  }
+
+  async function toggleCommentsStatus() {
+    if (!isOwner || working) return;
+
+    setWorking(true);
+    setError("");
+
+    const nextStatus = commentsClosed ? "open" : "closed";
+
+    const response = await fetch(`/api/posts/${localPost.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        body: localPost.body || "",
+        comments_status: nextStatus,
+        remove_media_ids: [],
+      }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setError(result.error || "Failed to update post.");
+      setWorking(false);
+      return;
     }
 
-    onDeleted?.(post.id);
+    setLocalPost(result.post);
+    setMenuOpen(false);
     setWorking(false);
+    router.refresh();
+  }
+
+  async function savePostEdit() {
+    if (!isOwner || working) return;
+
+    setWorking(true);
+    setError("");
+
+    const response = await fetch(`/api/posts/${localPost.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        body: editBody,
+        comments_status: localPost.comments_status || "open",
+        remove_media_ids: mediaToRemove,
+      }),
+    });
+
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setError(result.error || "Failed to update post.");
+      setWorking(false);
+      return;
+    }
+
+    setLocalPost(result.post);
+    setEditOpen(false);
+    setMenuOpen(false);
+    setMediaToRemove([]);
+    setWorking(false);
+    onChanged?.();
+    router.refresh();
+  }
+
+  async function sharePost() {
+    const url = `${window.location.origin}/post/${localPost.id}`;
+    const title = `Post by @${author?.username || "user"}`;
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title,
+          url,
+        });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setError("Post link copied.");
+      }
+    } catch {}
+
+    setMenuOpen(false);
+  }
+
+  function toggleRemoveMedia(mediaId) {
+    setMediaToRemove((current) =>
+      current.includes(mediaId)
+        ? current.filter((id) => id !== mediaId)
+        : [...current, mediaId]
+    );
   }
 
   return (
     <>
-      <article className="card overflow-hidden">
-        <div className="flex items-center justify-between gap-3 p-4">
+      <article className="card p-4">
+        <div className="flex items-start justify-between gap-3">
           <Link
-            href={`/@${author?.username}`}
+            href={author?.username ? `/@${author.username}` : "/"}
             className="flex min-w-0 items-center gap-3"
           >
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10 font-bold">
               {author?.avatar_url ? (
                 <img
                   src={author.avatar_url}
                   alt=""
-                  className="h-full w-full pointer-events-none object-cover"
+                  className="h-full w-full object-cover"
                 />
               ) : (
-                <span className="font-bold">
-                  {(author?.display_name || author?.username || "?")
-                    ?.charAt(0)
-                    ?.toUpperCase()}
-                </span>
+                (author?.display_name || author?.username || "?")
+                  ?.charAt(0)
+                  ?.toUpperCase()
               )}
             </div>
 
             <div className="min-w-0">
               <p className="truncate font-bold">
-                {author?.display_name || author?.username}
+                {author?.display_name || author?.username || "Unknown"}
               </p>
+
               <p className="truncate text-sm text-white/40">
-  @{author?.username} · <TimeAgo date={post.created_at} />
-  {post.visibility === "followers" && " · Followers only"}
-</p>
+                @{author?.username || "unknown"} ·{" "}
+                <TimeAgo date={localPost.created_at} />
+                {localPost.visibility === "followers" && " · Followers only"}
+                {commentsClosed && " · Comments closed"}
+              </p>
             </div>
           </Link>
 
-          {isOwner && (
+          <div className="relative">
             <button
-              onClick={deletePost}
-              disabled={working}
-              className="rounded-full p-2 text-red-300 transition hover:bg-red-500/10 disabled:opacity-40"
+              onClick={() => setMenuOpen((value) => !value)}
+              className="rounded-full p-2 text-white/55 transition hover:bg-white/10 hover:text-white"
             >
-              <Trash2 size={18} />
+              <MoreHorizontal size={20} />
             </button>
-          )}
+
+            {menuOpen && (
+              <div className="absolute right-0 top-11 z-20 w-56 overflow-hidden rounded-[22px] border border-white/10 bg-black/90 p-2 shadow-2xl backdrop-blur-2xl">
+                <button
+                  onClick={sharePost}
+                  className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm hover:bg-white/10"
+                >
+                  <Share2 size={16} />
+                  Share
+                </button>
+
+                {isOwner && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setEditOpen(true);
+                        setMenuOpen(false);
+                      }}
+                      className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm hover:bg-white/10"
+                    >
+                      <Edit3 size={16} />
+                      Edit
+                    </button>
+
+                    <button
+                      onClick={toggleCommentsStatus}
+                      className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm hover:bg-white/10"
+                    >
+                      <MessageCircleOff size={16} />
+                      {commentsClosed ? "Open comments" : "Close comments"}
+                    </button>
+
+                    <button
+                      onClick={deletePost}
+                      className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-red-200 hover:bg-red-500/10"
+                    >
+                      <Trash2 size={16} />
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
-        {post.body && (
-          <Link href={`/post/${post.id}`}>
-            <p className="whitespace-pre-wrap break-words px-4 pb-4 leading-relaxed text-white/90">
-              {post.body}
-            </p>
-          </Link>
+        {localPost.body && (
+          <p className="mt-4 whitespace-pre-wrap break-words text-white/85">
+            {localPost.body}
+          </p>
         )}
 
-        {post.media_url && post.media_type === "image" && (
-          <Link href={`/post/${post.id}`}>
-            <img
-              src={post.media_url}
-              alt=""
-              className="max-h-[720px] pointer-events-none w-full object-cover"
-            />
-          </Link>
+        <PostMediaCarousel post={localPost} />
+
+        {error && (
+          <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-sm text-white/65">
+            {error}
+          </p>
         )}
 
-        {post.media_url && post.media_type === "video" && (
-          <video
-            src={post.media_url}
-            controls
-            className="max-h-[720px] w-full bg-black object-contain"
-          />
-        )}
+        <div className="mt-4 flex items-center gap-2">
+          <button
+            onClick={toggleLike}
+            disabled={working}
+            className={`btn ${
+              liked ? "btn-primary" : "btn-secondary"
+            } min-h-10 px-4`}
+          >
+            <Heart size={16} fill={liked ? "currentColor" : "none"} />
+            {likesCount}
+          </button>
 
-        <div className="flex items-center justify-between border-t border-white/10 p-3">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={toggleLike}
-              disabled={working || loadingActions}
-              className={`btn min-h-10 px-4 ${
-                liked ? "btn-primary" : "btn-secondary"
-              }`}
-            >
-              <Heart size={17} fill={liked ? "currentColor" : "none"} />
-              {likesCount}
-            </button>
+          <button
+            onClick={() => setCommentsOpen(true)}
+            className="btn btn-secondary min-h-10 px-4"
+          >
+            {commentsClosed ? (
+              <MessageCircleOff size={16} />
+            ) : (
+              <MessageCircle size={16} />
+            )}
+            {commentsCount}
+          </button>
 
-            <button
-              onClick={() => setCommentsOpen(true)}
-              className="btn btn-secondary min-h-10 px-4"
-            >
-              <MessageCircle size={17} />
-              {commentsCount}
-            </button>
-          </div>
+          <button
+            onClick={sharePost}
+            className="btn btn-secondary min-h-10 px-4"
+          >
+            <Share2 size={16} />
+            Share
+          </button>
 
           <button
             onClick={toggleSave}
-            disabled={working || loadingActions}
-            className={`btn min-h-10 px-4 ${
+            disabled={working}
+            className={`btn ${
               saved ? "btn-primary" : "btn-secondary"
-            }`}
+            } ml-auto min-h-10 px-4`}
           >
-            <Bookmark size={17} fill={saved ? "currentColor" : "none"} />
+            <Bookmark size={16} fill={saved ? "currentColor" : "none"} />
           </button>
         </div>
       </article>
 
       <CommentsModal
-        open={commentsOpen}
+        isOpen={commentsOpen}
         onClose={() => setCommentsOpen(false)}
-        postId={post.id}
-        postOwnerId={post.user_id}
+        postId={localPost.id}
+        postOwnerId={localPost.user_id}
         currentUserId={currentUserId}
+        commentsStatus={localPost.comments_status || "open"}
         onCommentAdded={() => {
           setCommentsCount((count) => count + 1);
           onChanged?.();
@@ -346,6 +486,134 @@ if (!error) {
           onChanged?.();
         }}
       />
+
+      <Transition appear show={editOpen} as={Fragment}>
+        <Dialog
+          as="div"
+          className="relative z-50"
+          onClose={() => setEditOpen(false)}
+        >
+          <Transition.Child
+            as={Fragment}
+            enter="ease-out duration-200"
+            enterFrom="opacity-0"
+            enterTo="opacity-100"
+            leave="ease-in duration-150"
+            leaveFrom="opacity-100"
+            leaveTo="opacity-0"
+          >
+            <div className="fixed inset-0 bg-black/70 backdrop-blur-xl" />
+          </Transition.Child>
+
+          <div className="fixed inset-0 overflow-y-auto p-4">
+            <div className="flex min-h-full items-center justify-center">
+              <Transition.Child
+                as={Fragment}
+                enter="ease-out duration-200"
+                enterFrom="opacity-0 scale-95"
+                enterTo="opacity-100 scale-100"
+                leave="ease-in duration-150"
+                leaveFrom="opacity-100 scale-100"
+                leaveTo="opacity-0 scale-95"
+              >
+                <Dialog.Panel className="card w-full max-w-xl p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <Dialog.Title className="text-2xl font-black">
+                        Edit post
+                      </Dialog.Title>
+
+                      <p className="mt-1 text-sm text-white/45">
+                        You can edit text or delete images only.
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => setEditOpen(false)}
+                      className="rounded-full p-2 text-white/60 hover:bg-white/10"
+                    >
+                      <X size={20} />
+                    </button>
+                  </div>
+
+                  <div className="mt-5 space-y-4">
+                    <textarea
+                      className="field min-h-32 resize-none"
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                      maxLength={500}
+                    />
+
+                    <p className="text-right text-xs text-white/35">
+                      {editBody.length}/500
+                    </p>
+
+                    {mediaItems.length > 0 && (
+                      <div>
+                        <p className="mb-2 text-sm uppercase text-white/45">
+                          Images
+                        </p>
+
+                        <div className="grid grid-cols-3 gap-2">
+                          {mediaItems.map((item) => {
+                            const marked = mediaToRemove.includes(item.id);
+
+                            return (
+                              <button
+                                key={item.id}
+                                type="button"
+                                disabled={item.synthetic}
+                                onClick={() => toggleRemoveMedia(item.id)}
+                                className={`relative aspect-square overflow-hidden rounded-2xl border ${
+                                  marked
+                                    ? "border-red-300 opacity-45"
+                                    : "border-white/10"
+                                } bg-white/5`}
+                              >
+                                {item.media_type === "video" ? (
+                                  <video
+                                    src={item.media_url}
+                                    className="h-full w-full object-cover"
+                                    muted
+                                  />
+                                ) : (
+                                  <img
+                                    src={item.media_url}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                )}
+
+                                <span className="absolute inset-x-2 bottom-2 rounded-full bg-black/70 px-2 py-1 text-xs font-bold">
+                                  {marked ? "Will delete" : "Tap to delete"}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {error && (
+                      <p className="rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-200">
+                        {error}
+                      </p>
+                    )}
+
+                    <button
+                      onClick={savePostEdit}
+                      disabled={working}
+                      className="btn btn-primary w-full"
+                    >
+                      {working ? "Saving..." : "Save changes"}
+                    </button>
+                  </div>
+                </Dialog.Panel>
+              </Transition.Child>
+            </div>
+          </div>
+        </Dialog>
+      </Transition>
     </>
   );
 }

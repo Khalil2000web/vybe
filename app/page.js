@@ -11,9 +11,11 @@ function mapFeedRowToPost(row) {
     media_url: row.media_url,
     media_type: row.media_type,
     visibility: row.visibility,
+    comments_status: row.comments_status || "open",
     created_at: row.created_at,
     updated_at: row.updated_at,
     feed_score: row.feed_score,
+    post_media: [],
 
     profiles: {
       id: row.author_id,
@@ -22,6 +24,44 @@ function mapFeedRowToPost(row) {
       avatar_url: row.author_avatar_url,
     },
   };
+}
+
+async function attachPostData(supabase, posts) {
+  const postIds = posts.map((post) => post.id);
+
+  if (postIds.length === 0) return posts;
+
+  const { data: rows } = await supabase
+    .from("posts")
+    .select(
+      `
+      id,
+      comments_status,
+      post_media (
+        id,
+        media_url,
+        media_type,
+        sort_order
+      )
+    `
+    )
+    .in("id", postIds);
+
+  const dataByPostId = new Map();
+
+  for (const row of rows || []) {
+    dataByPostId.set(row.id, row);
+  }
+
+  return posts.map((post) => {
+    const extra = dataByPostId.get(post.id);
+
+    return {
+      ...post,
+      comments_status: extra?.comments_status || "open",
+      post_media: extra?.post_media || [],
+    };
+  });
 }
 
 export default async function HomePage() {
@@ -56,6 +96,7 @@ export default async function HomePage() {
 
   if (!feedError && feedRows) {
     posts = feedRows.map(mapFeedRowToPost);
+    posts = await attachPostData(supabase, posts);
   } else {
     const { data: fallbackPosts } = await supabase
       .from("posts")
@@ -67,6 +108,12 @@ export default async function HomePage() {
           username,
           display_name,
           avatar_url
+        ),
+        post_media (
+          id,
+          media_url,
+          media_type,
+          sort_order
         )
       `
       )

@@ -5,7 +5,36 @@ import { createAdminClient } from "@/app/lib/supabase/admin";
 export const runtime = "nodejs";
 
 const allowedVisibility = ["public", "followers"];
-const allowedMediaTypes = ["image", "video"];
+const MAX_MEDIA_ITEMS = 10;
+
+function cleanMediaItems(rawMedia, userId) {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+  if (!Array.isArray(rawMedia)) return [];
+
+  const storagePrefix = `${supabaseUrl}/storage/v1/object/public/post-media/${userId}/`;
+
+  return rawMedia
+    .slice(0, MAX_MEDIA_ITEMS)
+    .map((item) => {
+      const mediaUrl =
+        typeof item?.media_url === "string" ? item.media_url.trim() : "";
+
+      const mediaType =
+        typeof item?.media_type === "string" ? item.media_type.trim() : "";
+
+      return {
+        media_url: mediaUrl,
+        media_type: mediaType,
+      };
+    })
+    .filter((item) => {
+      if (!item.media_url) return false;
+      if (item.media_type !== "image") return false;
+
+      return item.media_url.startsWith(storagePrefix);
+    });
+}
 
 export async function POST(request) {
   try {
@@ -28,37 +57,15 @@ export async function POST(request) {
     const postBody =
       typeof body.body === "string" ? body.body.trim().slice(0, 500) : "";
 
-    const mediaUrl =
-      typeof body.media_url === "string" && body.media_url.trim()
-        ? body.media_url.trim()
-        : null;
-
-    const mediaType =
-      typeof body.media_type === "string" && body.media_type.trim()
-        ? body.media_type.trim()
-        : null;
+    const mediaItems = cleanMediaItems(body.media, user.id);
 
     const visibility = allowedVisibility.includes(body.visibility)
       ? body.visibility
       : "public";
 
-    if (!postBody && !mediaUrl) {
+    if (!postBody && mediaItems.length === 0) {
       return NextResponse.json(
         { error: "Post cannot be empty." },
-        { status: 400 }
-      );
-    }
-
-    if (mediaType && !allowedMediaTypes.includes(mediaType)) {
-      return NextResponse.json(
-        { error: "Invalid media type." },
-        { status: 400 }
-      );
-    }
-
-    if (mediaUrl && !mediaType) {
-      return NextResponse.json(
-        { error: "Media type is required when media exists." },
         { status: 400 }
       );
     }
@@ -78,15 +85,53 @@ export async function POST(request) {
       );
     }
 
-    const { data: post, error: insertError } = await admin
+    const firstMedia = mediaItems[0] || null;
+
+    const { data: createdPost, error: insertError } = await admin
       .from("posts")
       .insert({
         user_id: user.id,
         body: postBody || null,
-        media_url: mediaUrl,
-        media_type: mediaType,
+        media_url: firstMedia?.media_url || null,
+        media_type: firstMedia?.media_type || null,
         visibility,
+        comments_status: "open",
       })
+      .select("*")
+      .single();
+
+    if (insertError) {
+      return NextResponse.json(
+        { error: insertError.message },
+        { status: 500 }
+      );
+    }
+
+    if (mediaItems.length > 0) {
+      const rows = mediaItems.map((item, index) => ({
+        post_id: createdPost.id,
+        user_id: user.id,
+        media_url: item.media_url,
+        media_type: "image",
+        sort_order: index,
+      }));
+
+      const { error: mediaInsertError } = await admin
+        .from("post_media")
+        .insert(rows);
+
+      if (mediaInsertError) {
+        await admin.from("posts").delete().eq("id", createdPost.id);
+
+        return NextResponse.json(
+          { error: mediaInsertError.message },
+          { status: 500 }
+        );
+      }
+    }
+
+    const { data: post, error: fetchError } = await admin
+      .from("posts")
       .select(
         `
         *,
@@ -95,14 +140,21 @@ export async function POST(request) {
           username,
           display_name,
           avatar_url
+        ),
+        post_media (
+          id,
+          media_url,
+          media_type,
+          sort_order
         )
       `
       )
+      .eq("id", createdPost.id)
       .single();
 
-    if (insertError) {
+    if (fetchError) {
       return NextResponse.json(
-        { error: insertError.message },
+        { error: fetchError.message },
         { status: 500 }
       );
     }
