@@ -4,7 +4,14 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/app/lib/supabase/client";
 import Link from "next/link";
-import { ImagePlus, LockKeyhole, LogOut, SendHorizonal, Trash2, Unlock } from "lucide-react";
+import {
+  ImagePlus,
+  LockKeyhole,
+  LogOut,
+  SendHorizonal,
+  Trash2,
+  Unlock,
+} from "lucide-react";
 import PostCard from "@/app/components/PostCard";
 
 const MAX_IMAGE_SIZE = 6 * 1024 * 1024;
@@ -74,6 +81,16 @@ export default function HomeClient({ profile, initialPosts }) {
     setPosting(true);
     setError("");
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setError("You are not logged in. Please log in again.");
+      setPosting(false);
+      return;
+    }
+
     let media_url = null;
     let media_type = null;
 
@@ -102,40 +119,35 @@ export default function HomeClient({ profile, initialPosts }) {
       media_type = media.type.startsWith("video/") ? "video" : "image";
     }
 
-    const { data: newPost, error: postError } = await supabase
-      .from("posts")
-      .insert({
-        user_id: profile.id,
+    const response = await fetch("/api/posts/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
         body: body.trim() || null,
         media_url,
         media_type,
         visibility,
-      })
-      .select(
-        `
-        *,
-        profiles:user_id (
-          id,
-          username,
-          display_name,
-          avatar_url
-        )
-      `
-      )
-      .single();
+      }),
+    });
 
-    if (postError) {
-      setError(postError.message);
+    const result = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setError(result.error || "Failed to create post.");
       setPosting(false);
       return;
     }
 
-    setPosts((current) => [newPost, ...current]);
+    setPosts((current) => [result.post, ...current]);
     setBody("");
     setMedia(null);
     setMediaPreview("");
     setVisibility("public");
     setPosting(false);
+
+    router.refresh();
   }
 
   async function logout() {
@@ -149,9 +161,10 @@ export default function HomeClient({ profile, initialPosts }) {
       <section className="mb-5 flex items-center justify-between gap-3">
         <div>
           <p className="text-sm uppercase tracking-[0.22em] text-white/40">
-            Welcome
+            Welcome back
           </p>
-          <h1 className="text-2xl uppercase font-black leading-tight">
+
+          <h1 className="text-3xl font-black leading-tight">
             @{profile.username}
           </h1>
         </div>
@@ -172,11 +185,13 @@ export default function HomeClient({ profile, initialPosts }) {
               <img
                 src={profile.avatar_url}
                 alt=""
-                className="h-full w-full object-cover pointer-events-none"
+                className="h-full w-full object-cover"
               />
             ) : (
               <span className="font-bold">
-                {(profile.display_name || profile.username)?.charAt(0)?.toUpperCase()}
+                {(profile.display_name || profile.username)
+                  ?.charAt(0)
+                  ?.toUpperCase()}
               </span>
             )}
           </Link>
@@ -194,7 +209,9 @@ export default function HomeClient({ profile, initialPosts }) {
               <button
                 type="button"
                 onClick={() => setVisibility("public")}
-                className={`btn ${visibility === "public" ? "btn-primary" : "btn-secondary"}`}
+                className={`btn ${
+                  visibility === "public" ? "btn-primary" : "btn-secondary"
+                }`}
               >
                 <Unlock size={16} />
                 Public
@@ -203,7 +220,9 @@ export default function HomeClient({ profile, initialPosts }) {
               <button
                 type="button"
                 onClick={() => setVisibility("followers")}
-                className={`btn ${visibility === "followers" ? "btn-primary" : "btn-secondary"}`}
+                className={`btn ${
+                  visibility === "followers" ? "btn-primary" : "btn-secondary"
+                }`}
               >
                 <LockKeyhole size={16} />
                 Followers
@@ -222,7 +241,7 @@ export default function HomeClient({ profile, initialPosts }) {
                   <img
                     src={mediaPreview}
                     alt=""
-                    className="max-h-[420px] w-full object-cover  pointer-events-none"
+                    className="max-h-[420px] w-full object-cover"
                   />
                 )}
 
@@ -284,7 +303,9 @@ export default function HomeClient({ profile, initialPosts }) {
               post={post}
               currentUserId={profile.id}
               onDeleted={(postId) => {
-                setPosts((current) => current.filter((item) => item.id !== postId));
+                setPosts((current) =>
+                  current.filter((item) => item.id !== postId)
+                );
               }}
             />
           ))
