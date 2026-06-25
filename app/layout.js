@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Roboto_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import NavigationLoading from "@/app/components/NavigationLoading";
 
 const mono = Roboto_Mono({
   subsets: ["latin"],
@@ -20,6 +21,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" className={mono.variable}>
       <body className="min-h-screen font-[var(--mono)]">
+        <NavigationLoading />
         {children}
         <Analytics />
       </body>

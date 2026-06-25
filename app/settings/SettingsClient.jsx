@@ -185,7 +185,7 @@ export default function SettingsClient({ profile, settings }) {
         </p>
       )}
 
-      <section className="card mb-5 p-5">
+      <section className="hidden">
         <div className="mb-5 flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10">
             <UserRound size={20} />
@@ -212,7 +212,7 @@ export default function SettingsClient({ profile, settings }) {
           </div>
 
           <div>
-            <h2 className="text-2xl font-black">General preferences</h2>
+            <h2 className="text-2xl font-black flex items-center justify-center gap-2">General preferences<span className="rounded-2xl text-xs text-black bg-yellow-400 py-1 px-2">SOON</span></h2>
             <p className="text-sm text-white/45">
               Control simple app preferences.
             </p>
