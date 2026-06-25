@@ -1,65 +1,84 @@
-import Image from "next/image";
+import { redirect } from "next/navigation";
+import { createClient } from "@/app/lib/supabase/server";
+import AppShell from "@/app/components/AppShell";
+import HomeClient from "./HomeClient";
 
-export default function Home() {
+function mapFeedRowToPost(row) {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    body: row.body,
+    media_url: row.media_url,
+    media_type: row.media_type,
+    visibility: row.visibility,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    feed_score: row.feed_score,
+
+    profiles: {
+      id: row.author_id,
+      username: row.author_username,
+      display_name: row.author_display_name,
+      avatar_url: row.author_avatar_url,
+    },
+  };
+}
+
+export default async function HomePage() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/auth/login");
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (!profile) {
+    redirect("/auth/signup");
+  }
+
+  const { data: feedRows, error: feedError } = await supabase.rpc(
+    "get_home_feed",
+    {
+      p_limit: 50,
+    }
+  );
+
+  let posts = [];
+
+  if (!feedError && feedRows) {
+    posts = feedRows.map(mapFeedRowToPost);
+  } else {
+    const { data: fallbackPosts } = await supabase
+      .from("posts")
+      .select(
+        `
+        *,
+        profiles:user_id (
+          id,
+          username,
+          display_name,
+          avatar_url
+        )
+      `
+      )
+      .order("created_at", { ascending: false })
+      .limit(40);
+
+    posts = fallbackPosts || [];
+  }
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.js file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <AppShell profile={profile}>
+      <HomeClient profile={profile} initialPosts={posts} />
+    </AppShell>
   );
 }
