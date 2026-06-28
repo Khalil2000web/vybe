@@ -12,6 +12,7 @@ import {
   Trash2,
   Unlock,
 } from "lucide-react";
+import PostComposerTextarea from "@/app/components/PostComposerTextarea";
 
 const MAX_IMAGES = 10;
 const MAX_IMAGE_SIZE = 6 * 1024 * 1024;
@@ -301,7 +302,7 @@ export default function CreatePostClient({ profile }) {
       </div>
 
       <form onSubmit={createPost} className="space-y-5">
-        <section className="card p-4">
+        <section className="card relative z-[80] overflow-visible p-4">
           <div className="flex gap-3">
             <Link
               href={`/@${profile.username}`}
@@ -323,13 +324,13 @@ export default function CreatePostClient({ profile }) {
             </Link>
 
             <div className="min-w-0 flex-1">
-              <textarea
-                className="field min-h-32 resize-none"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                maxLength={500}
-                placeholder="Write something..."
-              />
+<PostComposerTextarea
+  className="field min-h-45 resize-none"
+  value={body}
+  onChange={setBody}
+  maxLength={500}
+  placeholder="Write something..."
+/>
 
               <p className="mt-2 text-right text-xs text-white/35">
                 {body.length}/500
@@ -338,7 +339,7 @@ export default function CreatePostClient({ profile }) {
           </div>
         </section>
 
-        <section className="card p-4">
+<section className="card relative z-[20] p-4">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-2xl font-black">Images</h2>

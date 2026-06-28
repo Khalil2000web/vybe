@@ -13,6 +13,7 @@ import {
 import TimeAgo from "@/app/components/TimeAgo";
 import { createClient } from "@/app/lib/supabase/client";
 import FollowRequestActions from "@/app/components/FollowRequestActions";
+import VerifiedBadge from "@/app/components/VerifiedBadge";
 
 function getNotificationIcon(type) {
   if (type === "like") return <Heart size={18} />;
@@ -21,29 +22,12 @@ function getNotificationIcon(type) {
   return <Bell size={18} />;
 }
 
-function getNotificationText(notification) {
-  const actorName =
-    notification.actor?.display_name ||
-    notification.actor?.username ||
-    "Someone";
-
-  if (notification.type === "like") {
-    return `${actorName} liked your post`;
-  }
-
-  if (notification.type === "comment") {
-    return `${actorName} commented on your post`;
-  }
-
-  if (notification.type === "follow") {
-    return `${actorName} followed you`;
-  }
-
-  if (notification.type === "mention") {
-    return `${actorName} mentioned you`;
-  }
-
-  return "You have a new notification";
+function getNotificationActionText(type) {
+  if (type === "like") return "liked your post";
+  if (type === "comment") return "commented on your post";
+  if (type === "follow") return "followed you";
+  if (type === "mention") return "mentioned you";
+  return "sent you a notification";
 }
 
 function getNotificationHref(notification) {
@@ -198,13 +182,20 @@ export default function NotificationsClient({
                       </div>
 
                       <div className="min-w-0">
-                        <p className="truncate font-bold">
-                          {requester.display_name || requester.username}
+                        <p className="flex min-w-0 items-center gap-1 font-bold">
+                          <span className="truncate">
+                            {requester.display_name || requester.username}
+                          </span>
+
+                          {requester.is_verified && (
+                            <VerifiedBadge size={14} />
+                          )}
                         </p>
 
-                       <p className="truncate text-sm text-white/45">
-  @{requester.username} · <TimeAgo date={row.created_at} />
-</p>
+                        <p className="truncate text-sm text-white/45">
+                          @{requester.username} ·{" "}
+                          <TimeAgo date={row.created_at} />
+                        </p>
                       </div>
                     </Link>
 
@@ -253,13 +244,16 @@ export default function NotificationsClient({
             <h2 className="mt-4 text-2xl font-black">No activity yet</h2>
 
             <p className="mt-2 text-white/50">
-              Likes, comments, and follows will appear here.
+              Likes, comments, mentions, and follows will appear here.
             </p>
           </div>
         ) : (
           notifications.map((notification) => {
             const href = getNotificationHref(notification);
             const actor = notification.actor;
+
+            const actorName =
+              actor?.display_name || actor?.username || "Someone";
 
             return (
               <Link
@@ -279,9 +273,7 @@ export default function NotificationsClient({
                     />
                   ) : (
                     <span className="font-bold">
-                      {(actor?.display_name || actor?.username || "?")
-                        ?.charAt(0)
-                        ?.toUpperCase()}
+                      {actorName?.charAt(0)?.toUpperCase()}
                     </span>
                   )}
 
@@ -292,18 +284,23 @@ export default function NotificationsClient({
 
                 <div className="min-w-0 flex-1">
                   <p className="break-words font-bold">
-                    {getNotificationText(notification)}
+                    <span className="inline-flex max-w-full items-center gap-1 align-middle">
+                      <span className="truncate">{actorName}</span>
+
+                      {actor?.is_verified && <VerifiedBadge size={14} />}
+                    </span>{" "}
+                    <span>{getNotificationActionText(notification.type)}</span>
                   </p>
 
                   <p className="mt-1 text-sm text-white/45">
-  <TimeAgo date={notification.created_at} />
-</p>
+                    <TimeAgo date={notification.created_at} />
+                  </p>
 
-{notification.post?.body && (
-  <p className="mt-1 line-clamp-1 text-sm text-white/45">
-    “{notification.post.body}”
-  </p>
-)}
+                  {notification.post?.body && (
+                    <p className="mt-1 line-clamp-1 text-sm text-white/45">
+                      “{notification.post.body}”
+                    </p>
+                  )}
                 </div>
 
                 {!notification.is_read && (

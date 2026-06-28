@@ -62,7 +62,7 @@ export default function AppShell({ children, profile }) {
       <main>{children}</main>
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-black/70 backdrop-blur-2xl flex items-center justify-center">
-        <div className="w-full mx-auto flex items-center justify-around max-w-3xl px-2 py-2">
+        <div className="w-[90%] mx-auto flex items-center justify-around max-w-3xl px-2 pb-3 pt-2">
           <Link
             className="flex flex-col items-center gap-1 py-2 text-[11px] text-white/70"
             href="/"

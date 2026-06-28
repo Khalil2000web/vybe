@@ -33,7 +33,8 @@ export default async function NotificationsPage() {
         id,
         username,
         display_name,
-        avatar_url
+        avatar_url,
+        is_verified
       ),
       post:posts!notifications_post_id_fkey (
         id,
@@ -60,7 +61,8 @@ export default async function NotificationsPage() {
           username,
           display_name,
           avatar_url,
-          bio
+          bio,
+          is_verified
         )
       `
       )

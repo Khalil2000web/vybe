@@ -5,9 +5,12 @@ import { Dialog, Transition } from "@headlessui/react";
 import { createClient } from "@/app/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import CoverCropDialog from "@/app/components/CoverCropDialog";
+import ConfirmDialog from "@/app/components/ConfirmDialog";
 import { Image, LockKeyhole, Settings, Trash2, X } from "lucide-react";
 import FollowButton from "@/app/components/FollowButton";
 import FollowRequestActions from "@/app/components/FollowRequestActions";
+import VerifiedBadge from "@/app/components/VerifiedBadge";
 
 const MAX_AVATAR_SIZE = 4 * 1024 * 1024;
 const MAX_COVER_SIZE = 8 * 1024 * 1024;
@@ -75,6 +78,9 @@ export default function ProfilePageClient({
   const [imageSaving, setImageSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [avatarConfirmOpen, setAvatarConfirmOpen] = useState(false);
+const [coverConfirmOpen, setCoverConfirmOpen] = useState(false);
+const [coverFileToCrop, setCoverFileToCrop] = useState(null);
 
   const cleanUsername = useMemo(() => {
     return username.toLowerCase().trim().replace(/^@/, "");
@@ -253,145 +259,156 @@ export default function ProfilePageClient({
   }
 
   async function removeAvatar() {
-    if (!isOwner || !profile.avatar_url) return;
+  if (!isOwner || !profile.avatar_url || imageSaving) return;
 
-    const ok = window.confirm("Remove your profile image?");
-    if (!ok) return;
+  setImageSaving(true);
+  setError("");
+  setSuccess("");
 
-    setImageSaving(true);
-    setError("");
-    setSuccess("");
+  const avatarPath = getStoragePathFromPublicUrl(profile.avatar_url, "avatars");
 
-    const avatarPath = getStoragePathFromPublicUrl(profile.avatar_url, "avatars");
-
-    if (avatarPath) {
-      await supabase.storage.from("avatars").remove([avatarPath]);
-    }
-
-    const { data, error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        avatar_url: null,
-      })
-      .eq("id", currentUserId)
-      .select()
-      .single();
-
-    if (updateError) {
-      setError(updateError.message);
-      setImageSaving(false);
-      return;
-    }
-
-    setProfile(data);
-    setSuccess("Avatar removed.");
-    setImageSaving(false);
-    router.refresh();
+  if (avatarPath) {
+    await supabase.storage.from("avatars").remove([avatarPath]);
   }
+
+  const { data, error: updateError } = await supabase
+    .from("profiles")
+    .update({
+      avatar_url: null,
+    })
+    .eq("id", currentUserId)
+    .select()
+    .single();
+
+  if (updateError) {
+    setError(updateError.message);
+    setImageSaving(false);
+    setAvatarConfirmOpen(false);
+    return;
+  }
+
+  setProfile(data);
+  setSuccess("Avatar removed.");
+  setImageSaving(false);
+  setAvatarConfirmOpen(false);
+  router.refresh();
+}
 
   async function uploadCover(e) {
-    const file = e.target.files?.[0];
+  const file = e.target.files?.[0];
 
-    if (!file || !isOwner) return;
+  e.target.value = "";
 
-    setImageSaving(true);
-    setError("");
-    setSuccess("");
+  if (!file || !isOwner) return;
 
-    if (!allowedImageTypes.includes(file.type)) {
-      setError("Cover image must be JPG, PNG, or WEBP.");
-      setImageSaving(false);
-      return;
-    }
+  setError("");
+  setSuccess("");
 
-    if (file.size > MAX_COVER_SIZE) {
-      setError("Cover image is too large. Max is 8MB.");
-      setImageSaving(false);
-      return;
-    }
-
-    const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-    const filePath = `${currentUserId}/cover.${ext}`;
-
-    const { error: uploadError } = await supabase.storage
-      .from("avatars")
-      .upload(filePath, file, {
-        upsert: true,
-        contentType: file.type,
-        cacheControl: "3600",
-      });
-
-    if (uploadError) {
-      setError(uploadError.message);
-      setImageSaving(false);
-      return;
-    }
-
-    const { data: publicUrlData } = supabase.storage
-      .from("avatars")
-      .getPublicUrl(filePath);
-
-    const newCoverUrl = `${publicUrlData.publicUrl}?v=${Date.now()}`;
-
-    const { data, error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        cover_url: newCoverUrl,
-      })
-      .eq("id", currentUserId)
-      .select()
-      .single();
-
-    if (updateError) {
-      setError(updateError.message);
-      setImageSaving(false);
-      return;
-    }
-
-    setProfile(data);
-    setCoverUrl(newCoverUrl);
-    setSuccess("Cover image updated.");
-    setImageSaving(false);
-    router.refresh();
+  if (!allowedImageTypes.includes(file.type)) {
+    setError("Cover image must be JPG, PNG, or WEBP.");
+    return;
   }
+
+  if (file.size > MAX_COVER_SIZE) {
+    setError("Cover image is too large. Max is 8MB.");
+    return;
+  }
+
+  setCoverFileToCrop(file);
+}
+
+
+async function uploadCroppedCover(blob) {
+  if (!isOwner || !blob || imageSaving) return;
+
+  setImageSaving(true);
+  setError("");
+  setSuccess("");
+
+  const filePath = `${currentUserId}/cover.jpg`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("avatars")
+    .upload(filePath, blob, {
+      upsert: true,
+      contentType: "image/jpeg",
+      cacheControl: "3600",
+    });
+
+  if (uploadError) {
+    setError(uploadError.message);
+    setImageSaving(false);
+    setCoverFileToCrop(null);
+    return;
+  }
+
+  const { data: publicUrlData } = supabase.storage
+    .from("avatars")
+    .getPublicUrl(filePath);
+
+  const newCoverUrl = `${publicUrlData.publicUrl}?v=${Date.now()}`;
+
+  const { data, error: updateError } = await supabase
+    .from("profiles")
+    .update({
+      cover_url: newCoverUrl,
+    })
+    .eq("id", currentUserId)
+    .select()
+    .single();
+
+  if (updateError) {
+    setError(updateError.message);
+    setImageSaving(false);
+    setCoverFileToCrop(null);
+    return;
+  }
+
+  setProfile(data);
+  setCoverUrl(newCoverUrl);
+  setSuccess("Cover image updated.");
+  setImageSaving(false);
+  setCoverFileToCrop(null);
+  router.refresh();
+}
+
 
   async function removeCover() {
-    if (!isOwner || !coverUrl) return;
+  if (!isOwner || !coverUrl || imageSaving) return;
 
-    const ok = window.confirm("Remove your cover image?");
-    if (!ok) return;
+  setImageSaving(true);
+  setError("");
+  setSuccess("");
 
-    setImageSaving(true);
-    setError("");
-    setSuccess("");
+  const coverPath = getStoragePathFromPublicUrl(coverUrl, "avatars");
 
-    const coverPath = getStoragePathFromPublicUrl(coverUrl, "avatars");
-
-    if (coverPath) {
-      await supabase.storage.from("avatars").remove([coverPath]);
-    }
-
-    const { data, error: updateError } = await supabase
-      .from("profiles")
-      .update({
-        cover_url: null,
-      })
-      .eq("id", currentUserId)
-      .select()
-      .single();
-
-    if (updateError) {
-      setError(updateError.message);
-      setImageSaving(false);
-      return;
-    }
-
-    setProfile(data);
-    setCoverUrl("");
-    setSuccess("Cover image removed.");
-    setImageSaving(false);
-    router.refresh();
+  if (coverPath) {
+    await supabase.storage.from("avatars").remove([coverPath]);
   }
+
+  const { data, error: updateError } = await supabase
+    .from("profiles")
+    .update({
+      cover_url: null,
+    })
+    .eq("id", currentUserId)
+    .select()
+    .single();
+
+  if (updateError) {
+    setError(updateError.message);
+    setImageSaving(false);
+    setCoverConfirmOpen(false);
+    return;
+  }
+
+  setProfile(data);
+  setCoverUrl("");
+  setSuccess("Cover image removed.");
+  setImageSaving(false);
+  setCoverConfirmOpen(false);
+  router.refresh();
+}
 
   return (
     <main className="container-page">
@@ -408,7 +425,7 @@ export default function ProfilePageClient({
 
         <div className="relative z-10">
           {profile.cover_url && (
-            <div className="mb-5 h-40 overflow-hidden rounded-[24px] border border-white/10 bg-white/5">
+            <div className="mb-5 aspect-[8/3] overflow-hidden rounded-[24px] border border-white/10 bg-white/5">
               <img
                 src={profile.cover_url}
                 alt=""
@@ -434,17 +451,22 @@ export default function ProfilePageClient({
               </div>
 
               <div className="min-w-0">
-                <h1 className="break-words text-2xl font-black leading-none flex items-center gap-1">
-                                 {profile.is_private && (
-  <span className="">
-    <LockKeyhole size={17} />
-    
-  </span>
-)} {profile.display_name || profile.username}
-                </h1>
+<h1 className="flex min-w-0 flex-wrap items-center gap-1 break-words text-2xl font-black leading-none">
+  {profile.is_private && (
+    <span className="inline-flex shrink-0 text-white/75">
+      <LockKeyhole size={17} />
+    </span>
+  )}
 
-                <p className="mt-2 text-white/50">@{profile.username}</p>
- 
+  <span className="min-w-0 break-words">
+    {profile.display_name || profile.username}
+  </span>
+{profile.is_verified && <VerifiedBadge size={20} />}
+</h1>
+
+<p className="mt-2 flex items-center gap-1 text-white/50">
+  @{profile.username}
+</p> 
               </div>
             </div>
 
@@ -650,7 +672,7 @@ export default function ProfilePageClient({
                         Cover image
                       </p>
 
-                      <div className="relative h-40 overflow-hidden rounded-[24px] border border-white/10 bg-white/5">
+                      <div className="relative aspect-[8/3] overflow-hidden rounded-[24px] border border-white/10 bg-white/5">
                         {coverUrl ? (
                           <img
                             src={coverUrl}
@@ -678,14 +700,14 @@ export default function ProfilePageClient({
                           </label>
 
                           {coverUrl && (
-                            <button
-                              onClick={removeCover}
-                              disabled={imageSaving}
-                              className="btn btn-danger min-h-10 px-4"
-                            >
-                              <Trash2 size={16} />
-                              Remove
-                            </button>
+<button
+  onClick={() => setCoverConfirmOpen(true)}
+  disabled={imageSaving}
+  className="btn btn-danger min-h-10 px-4"
+>
+  <Trash2 size={16} />
+  Remove
+</button>
                           )}
                         </div>
                       </div>
@@ -728,14 +750,14 @@ export default function ProfilePageClient({
                           </label>
 
                           {profile.avatar_url && (
-                            <button
-                              onClick={removeAvatar}
-                              disabled={imageSaving}
-                              className="btn btn-danger"
-                            >
-                              <Trash2 size={16} />
-                              Remove
-                            </button>
+<button
+  onClick={() => setAvatarConfirmOpen(true)}
+  disabled={imageSaving}
+  className="btn btn-danger"
+>
+  <Trash2 size={16} />
+  Remove
+</button>
                           )}
                         </div>
                       </div>
@@ -873,6 +895,47 @@ export default function ProfilePageClient({
           </div>
         </Dialog>
       </Transition>
+
+
+<ConfirmDialog
+  open={avatarConfirmOpen}
+  onClose={() => {
+    if (!imageSaving) setAvatarConfirmOpen(false);
+  }}
+  onConfirm={removeAvatar}
+  loading={imageSaving}
+  title="Remove profile image?"
+  description="Your avatar will be removed from your profile. You can upload a new one anytime."
+  confirmText="Remove image"
+  cancelText="Keep image"
+  danger
+/>
+
+<CoverCropDialog
+  open={Boolean(coverFileToCrop)}
+  file={coverFileToCrop}
+  onClose={() => {
+    if (!imageSaving) setCoverFileToCrop(null);
+  }}
+  onCropped={uploadCroppedCover}
+  loading={imageSaving}
+/>
+
+<ConfirmDialog
+  open={coverConfirmOpen}
+  onClose={() => {
+    if (!imageSaving) setCoverConfirmOpen(false);
+  }}
+  onConfirm={removeCover}
+  loading={imageSaving}
+  title="Remove cover image?"
+  description="Your cover image will be removed from your profile. You can upload a new one anytime."
+  confirmText="Remove cover"
+  cancelText="Keep cover"
+  danger
+/>
+
+
     </main>
   );
 }

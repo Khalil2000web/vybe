@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import Link from "next/link";
+import ConfirmDialog from "@/app/components/ConfirmDialog";
 import { LockKeyhole, SendHorizonal, Trash2, X } from "lucide-react";
 import { createClient } from "@/app/lib/supabase/client";
 import TimeAgo from "@/app/components/TimeAgo";
@@ -24,6 +25,7 @@ export default function CommentsModal({
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [commentToDelete, setCommentToDelete] = useState(null);
 
   const commentsClosed = commentsStatus === "closed";
 
@@ -104,35 +106,35 @@ export default function CommentsModal({
   }
 
   async function deleteComment(commentId) {
-    if (!currentUserId || working) return;
+  if (!currentUserId || working) return;
 
-    const ok = window.confirm("Delete this comment?");
-    if (!ok) return;
+  setWorking(true);
+  setError("");
 
-    setWorking(true);
-    setError("");
+  const { error: deleteError } = await supabase
+    .from("comments")
+    .delete()
+    .eq("id", commentId)
+    .eq("user_id", currentUserId);
 
-    const { error: deleteError } = await supabase
-      .from("comments")
-      .delete()
-      .eq("id", commentId)
-      .eq("user_id", currentUserId);
-
-    if (deleteError) {
-      setError(deleteError.message);
-      setWorking(false);
-      return;
-    }
-
-    setComments((current) =>
-      current.filter((comment) => comment.id !== commentId)
-    );
-
+  if (deleteError) {
+    setError(deleteError.message);
     setWorking(false);
-    onCommentDeleted?.();
+    setCommentToDelete(null);
+    return;
   }
 
+  setComments((current) =>
+    current.filter((comment) => comment.id !== commentId)
+  );
+
+  setWorking(false);
+  setCommentToDelete(null);
+  onCommentDeleted?.();
+}
+
   return (
+    <>
     <Transition appear show={isOpen} as={Fragment}>
       <Dialog as="div" className="relative z-50" onClose={onClose}>
         <Transition.Child
@@ -237,7 +239,7 @@ export default function CommentsModal({
 
                             {isOwnComment && (
                               <button
-                                onClick={() => deleteComment(comment.id)}
+                                onClick={() => setCommentToDelete(comment)}
                                 disabled={working}
                                 className="rounded-full p-2 text-white/40 hover:bg-red-500/10 hover:text-red-200"
                               >
@@ -291,5 +293,21 @@ export default function CommentsModal({
         </div>
       </Dialog>
     </Transition>
+
+
+<ConfirmDialog
+  open={Boolean(commentToDelete)}
+  onClose={() => {
+    if (!working) setCommentToDelete(null);
+  }}
+  onConfirm={() => deleteComment(commentToDelete?.id)}
+  loading={working}
+  title="Delete comment?"
+  description="This comment will be removed from the post. This cannot be undone."
+  confirmText="Delete comment"
+  cancelText="Keep comment"
+  danger
+/>
+</>
   );
 }

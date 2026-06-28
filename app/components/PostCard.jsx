@@ -1,9 +1,11 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Dialog, Transition } from "@headlessui/react";
 import { useRouter } from "next/navigation";
+import ConfirmDialog from "@/app/components/ConfirmDialog";
+import PostComposerTextarea from "@/app/components/PostComposerTextarea";
 import {
   Bookmark,
   Edit3,
@@ -19,6 +21,8 @@ import { createClient } from "@/app/lib/supabase/client";
 import CommentsModal from "@/app/components/CommentsModal";
 import TimeAgo from "@/app/components/TimeAgo";
 import PostMediaCarousel from "@/app/components/PostMediaCarousel";
+import PostText from "@/app/components/PostText";
+import VerifiedBadge from "@/app/components/VerifiedBadge";
 
 function getMediaItems(post) {
   const mediaFromTable = Array.isArray(post?.post_media)
@@ -53,6 +57,8 @@ export default function PostCard({
 }) {
   const router = useRouter();
   const supabase = createClient();
+  const menuRef = useRef(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const [localPost, setLocalPost] = useState(post);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -61,10 +67,13 @@ export default function PostCard({
   const author = localPost.profiles;
   const mediaItems = useMemo(() => getMediaItems(localPost), [localPost]);
 
-  const [likesCount, setLikesCount] = useState(0);
-  const [commentsCount, setCommentsCount] = useState(0);
-  const [liked, setLiked] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [likesCount, setLikesCount] = useState(Number(post.likes_count || 0));
+  const [commentsCount, setCommentsCount] = useState(
+    Number(post.comments_count || 0)
+  );
+  const [liked, setLiked] = useState(Boolean(post.is_liked_by_me));
+  const [saved, setSaved] = useState(Boolean(post.is_saved_by_me));
+
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
@@ -79,49 +88,40 @@ export default function PostCard({
     setLocalPost(post);
     setEditBody(post.body || "");
     setMediaToRemove([]);
+
+    setLikesCount(Number(post.likes_count || 0));
+    setCommentsCount(Number(post.comments_count || 0));
+    setLiked(Boolean(post.is_liked_by_me));
+    setSaved(Boolean(post.is_saved_by_me));
   }, [post]);
 
   useEffect(() => {
-    async function loadStats() {
-      const [likesResult, commentsResult, likedResult, savedResult] =
-        await Promise.all([
-          supabase
-            .from("post_likes")
-            .select("*", { count: "exact", head: true })
-            .eq("post_id", localPost.id),
+  if (!menuOpen) return;
 
-          supabase
-            .from("comments")
-            .select("*", { count: "exact", head: true })
-            .eq("post_id", localPost.id),
+  function handleClickOutside(event) {
+    if (!menuRef.current) return;
 
-          currentUserId
-            ? supabase
-                .from("post_likes")
-                .select("post_id")
-                .eq("post_id", localPost.id)
-                .eq("user_id", currentUserId)
-                .maybeSingle()
-            : Promise.resolve({ data: null }),
-
-          currentUserId
-            ? supabase
-                .from("saved_posts")
-                .select("post_id")
-                .eq("post_id", localPost.id)
-                .eq("user_id", currentUserId)
-                .maybeSingle()
-            : Promise.resolve({ data: null }),
-        ]);
-
-      setLikesCount(likesResult.count || 0);
-      setCommentsCount(commentsResult.count || 0);
-      setLiked(Boolean(likedResult.data));
-      setSaved(Boolean(savedResult.data));
+    if (!menuRef.current.contains(event.target)) {
+      setMenuOpen(false);
     }
+  }
 
-    loadStats();
-  }, [localPost.id, currentUserId, supabase]);
+  function handleEscape(event) {
+    if (event.key === "Escape") {
+      setMenuOpen(false);
+    }
+  }
+
+  document.addEventListener("mousedown", handleClickOutside);
+  document.addEventListener("touchstart", handleClickOutside);
+  document.addEventListener("keydown", handleEscape);
+
+  return () => {
+    document.removeEventListener("mousedown", handleClickOutside);
+    document.removeEventListener("touchstart", handleClickOutside);
+    document.removeEventListener("keydown", handleEscape);
+  };
+}, [menuOpen]);
 
   async function toggleLike() {
     if (!currentUserId) {
@@ -204,28 +204,28 @@ export default function PostCard({
   }
 
   async function deletePost() {
-    if (!isOwner || working) return;
+  if (!isOwner || working) return;
 
-    const ok = window.confirm("Delete this post?");
-    if (!ok) return;
+  setWorking(true);
+  setError("");
 
-    setWorking(true);
+  const response = await fetch(`/api/posts/${localPost.id}`, {
+    method: "DELETE",
+  });
 
-    const response = await fetch(`/api/posts/${localPost.id}`, {
-      method: "DELETE",
-    });
+  const result = await response.json().catch(() => ({}));
 
-    const result = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      setError(result.error || "Failed to delete post.");
-      setWorking(false);
-      return;
-    }
-
-    onDeleted?.(localPost.id);
-    router.refresh();
+  if (!response.ok) {
+    setError(result.error || "Failed to delete post.");
+    setWorking(false);
+    setDeleteConfirmOpen(false);
+    return;
   }
+
+  setDeleteConfirmOpen(false);
+  onDeleted?.(localPost.id);
+  router.refresh();
+}
 
   async function toggleCommentsStatus() {
     if (!isOwner || working) return;
@@ -325,7 +325,11 @@ export default function PostCard({
 
   return (
     <>
-      <article className="card p-4">
+      <article
+  className={`card relative overflow-visible p-4 ${
+    menuOpen ? "z-[100]" : "z-0"
+  }`}
+>
         <div className="flex items-start justify-between gap-3">
           <Link
             href={author?.username ? `/@${author.username}` : "/"}
@@ -346,8 +350,12 @@ export default function PostCard({
             </div>
 
             <div className="min-w-0">
-              <p className="truncate font-bold">
-                {author?.display_name || author?.username || "Unknown"}
+              <p className="flex min-w-0 items-center gap-1 font-bold">
+                <span className="truncate">
+                  {author?.display_name || author?.username || "Unknown"}
+                </span>
+
+                {author?.is_verified && <VerifiedBadge size={15} />}
               </p>
 
               <p className="truncate text-sm text-white/40">
@@ -359,7 +367,7 @@ export default function PostCard({
             </div>
           </Link>
 
-          <div className="relative">
+          <div ref={menuRef} className="relative z-[120]">
             <button
               onClick={() => setMenuOpen((value) => !value)}
               className="rounded-full p-2 text-white/55 transition hover:bg-white/10 hover:text-white"
@@ -368,8 +376,7 @@ export default function PostCard({
             </button>
 
             {menuOpen && (
-              <div className="absolute right-0 top-11 z-20 w-56 overflow-hidden rounded-[22px] border border-white/10 bg-black/90 p-2 shadow-2xl backdrop-blur-2xl">
-                <button
+<div className="absolute right-0 top-11 z-[9999] w-56 overflow-hidden rounded-[22px] border border-white/10 bg-black/95 p-2 shadow-2xl backdrop-blur-2xl">                <button
                   onClick={sharePost}
                   className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm hover:bg-white/10"
                 >
@@ -399,7 +406,10 @@ export default function PostCard({
                     </button>
 
                     <button
-                      onClick={deletePost}
+                      onClick={() => {
+  setMenuOpen(false);
+  setDeleteConfirmOpen(true);
+}}
                       className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-red-200 hover:bg-red-500/10"
                     >
                       <Trash2 size={16} />
@@ -412,11 +422,7 @@ export default function PostCard({
           </div>
         </div>
 
-        {localPost.body && (
-          <p className="mt-4 whitespace-pre-wrap break-words text-white/85">
-            {localPost.body}
-          </p>
-        )}
+        <PostText text={localPost.body} />
 
         <PostMediaCarousel post={localPost} />
 
@@ -516,7 +522,7 @@ export default function PostCard({
                 leaveFrom="opacity-100 scale-100"
                 leaveTo="opacity-0 scale-95"
               >
-                <Dialog.Panel className="card w-full max-w-xl p-5">
+                <Dialog.Panel className="card relative z-[200] w-full max-w-xl overflow-visible p-5">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <Dialog.Title className="text-2xl font-black">
@@ -536,13 +542,14 @@ export default function PostCard({
                     </button>
                   </div>
 
-                  <div className="mt-5 space-y-4">
-                    <textarea
-                      className="field min-h-32 resize-none"
-                      value={editBody}
-                      onChange={(e) => setEditBody(e.target.value)}
-                      maxLength={500}
-                    />
+                  <div className="relative z-[210] mt-5 space-y-4 overflow-visible">
+<PostComposerTextarea
+  className="field min-h-32 resize-none"
+  value={editBody}
+  onChange={setEditBody}
+  maxLength={500}
+  placeholder="Edit your post..."
+/>
 
                     <p className="text-right text-xs text-white/35">
                       {editBody.length}/500
@@ -614,6 +621,20 @@ export default function PostCard({
           </div>
         </Dialog>
       </Transition>
+
+<ConfirmDialog
+  open={deleteConfirmOpen}
+  onClose={() => {
+    if (!working) setDeleteConfirmOpen(false);
+  }}
+  onConfirm={deletePost}
+  loading={working}
+  title="Delete post?"
+  description="This post, its images, likes, comments, saves, hashtags, and mentions will be removed. This cannot be undone."
+  confirmText="Delete post"
+  cancelText="Keep post"
+  danger
+/>
     </>
   );
 }

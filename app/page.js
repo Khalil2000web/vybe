@@ -14,54 +14,24 @@ function mapFeedRowToPost(row) {
     comments_status: row.comments_status || "open",
     created_at: row.created_at,
     updated_at: row.updated_at,
+
+    likes_count: Number(row.likes_count || 0),
+    comments_count: Number(row.comments_count || 0),
+    saves_count: Number(row.saves_count || 0),
+    is_liked_by_me: Boolean(row.is_liked_by_me),
+    is_saved_by_me: Boolean(row.is_saved_by_me),
+
     feed_score: row.feed_score,
-    post_media: [],
+    post_media: Array.isArray(row.post_media) ? row.post_media : [],
 
     profiles: {
       id: row.author_id,
       username: row.author_username,
       display_name: row.author_display_name,
       avatar_url: row.author_avatar_url,
+      is_verified: Boolean(row.author_is_verified),
     },
   };
-}
-
-async function attachPostData(supabase, posts) {
-  const postIds = posts.map((post) => post.id);
-
-  if (postIds.length === 0) return posts;
-
-  const { data: rows } = await supabase
-    .from("posts")
-    .select(
-      `
-      id,
-      comments_status,
-      post_media (
-        id,
-        media_url,
-        media_type,
-        sort_order
-      )
-    `
-    )
-    .in("id", postIds);
-
-  const dataByPostId = new Map();
-
-  for (const row of rows || []) {
-    dataByPostId.set(row.id, row);
-  }
-
-  return posts.map((post) => {
-    const extra = dataByPostId.get(post.id);
-
-    return {
-      ...post,
-      comments_status: extra?.comments_status || "open",
-      post_media: extra?.post_media || [],
-    };
-  });
 }
 
 export default async function HomePage() {
@@ -88,7 +58,7 @@ export default async function HomePage() {
   const { data: feedRows, error: feedError } = await supabase.rpc(
     "get_home_feed",
     {
-      p_limit: 50,
+      p_limit: 30,
     }
   );
 
@@ -96,7 +66,6 @@ export default async function HomePage() {
 
   if (!feedError && feedRows) {
     posts = feedRows.map(mapFeedRowToPost);
-    posts = await attachPostData(supabase, posts);
   } else {
     const { data: fallbackPosts } = await supabase
       .from("posts")
@@ -107,7 +76,8 @@ export default async function HomePage() {
           id,
           username,
           display_name,
-          avatar_url
+          avatar_url,
+          is_verified
         ),
         post_media (
           id,
@@ -118,7 +88,7 @@ export default async function HomePage() {
       `
       )
       .order("created_at", { ascending: false })
-      .limit(40);
+      .limit(30);
 
     posts = fallbackPosts || [];
   }
