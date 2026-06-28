@@ -4,11 +4,13 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   Bell,
+  Check,
   CheckCheck,
   Heart,
   LockKeyhole,
   MessageCircle,
   UserPlus,
+  X,
 } from "lucide-react";
 import TimeAgo from "@/app/components/TimeAgo";
 import { createClient } from "@/app/lib/supabase/client";
@@ -19,6 +21,9 @@ function getNotificationIcon(type) {
   if (type === "like") return <Heart size={18} />;
   if (type === "comment") return <MessageCircle size={18} />;
   if (type === "follow") return <UserPlus size={18} />;
+  if (type === "mention") return <Bell size={18} />;
+  if (type === "collab_request") return <UserPlus size={18} />;
+  if (type === "collab_accepted") return <Check size={18} />;
   return <Bell size={18} />;
 }
 
@@ -27,6 +32,8 @@ function getNotificationActionText(type) {
   if (type === "comment") return "commented on your post";
   if (type === "follow") return "followed you";
   if (type === "mention") return "mentioned you";
+  if (type === "collab_request") return "invited you to collaborate on a post";
+  if (type === "collab_accepted") return "accepted your collaboration request";
   return "sent you a notification";
 }
 
@@ -46,6 +53,17 @@ function getNotificationHref(notification) {
   return "/";
 }
 
+function ActorName({ actor }) {
+  const actorName = actor?.display_name || actor?.username || "Someone";
+
+  return (
+    <span className="inline-flex max-w-full items-center gap-1 align-middle">
+      <span className="truncate">{actorName}</span>
+      {actor?.is_verified && <VerifiedBadge size={14} />}
+    </span>
+  );
+}
+
 export default function NotificationsClient({
   initialNotifications,
   initialFollowRequests,
@@ -56,6 +74,8 @@ export default function NotificationsClient({
   const [notifications, setNotifications] = useState(initialNotifications);
   const [followRequests, setFollowRequests] = useState(initialFollowRequests);
   const [working, setWorking] = useState(false);
+  const [workingCollabId, setWorkingCollabId] = useState("");
+  const [error, setError] = useState("");
 
   async function markOneRead(notificationId) {
     setNotifications((current) =>
@@ -87,6 +107,43 @@ export default function NotificationsClient({
       .eq("is_read", false);
 
     setWorking(false);
+  }
+
+  async function respondToCollab(notification, response) {
+    if (!notification?.post_id || workingCollabId) return;
+
+    setWorkingCollabId(notification.id);
+    setError("");
+
+    const { error: rpcError } = await supabase.rpc(
+      "respond_to_post_collaboration",
+      {
+        p_post_id: notification.post_id,
+        p_response: response,
+      }
+    );
+
+    if (rpcError) {
+      setError(rpcError.message);
+      setWorkingCollabId("");
+      return;
+    }
+
+    await markOneRead(notification.id);
+
+    setNotifications((current) =>
+      current.map((item) =>
+        item.id === notification.id
+          ? {
+              ...item,
+              is_read: true,
+              collab_response: response,
+            }
+          : item
+      )
+    );
+
+    setWorkingCollabId("");
   }
 
   function removeRequest(requesterId) {
@@ -132,6 +189,12 @@ export default function NotificationsClient({
           </button>
         )}
       </div>
+
+      {error && (
+        <p className="mb-5 rounded-2xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-200">
+          {error}
+        </p>
+      )}
 
       {currentProfile.is_private && (
         <section className="mb-5">
@@ -244,16 +307,109 @@ export default function NotificationsClient({
             <h2 className="mt-4 text-2xl font-black">No activity yet</h2>
 
             <p className="mt-2 text-white/50">
-              Likes, comments, mentions, and follows will appear here.
+              Likes, comments, mentions, follows, and collabs will appear here.
             </p>
           </div>
         ) : (
           notifications.map((notification) => {
             const href = getNotificationHref(notification);
             const actor = notification.actor;
-
             const actorName =
               actor?.display_name || actor?.username || "Someone";
+
+            const isCollabRequest = notification.type === "collab_request";
+            const isCollabWorking = workingCollabId === notification.id;
+            const alreadyResponded = Boolean(notification.collab_response);
+
+            if (isCollabRequest) {
+              return (
+                <div
+                  key={notification.id}
+                  className={`card flex items-start gap-3 p-4 transition ${
+                    notification.is_read ? "opacity-75" : "border-white/25"
+                  }`}
+                >
+                  <Link
+                    href={href}
+                    onClick={() => markOneRead(notification.id)}
+                    className="relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10"
+                  >
+                    {actor?.avatar_url ? (
+                      <img
+                        src={actor.avatar_url}
+                        alt=""
+                        className="h-full w-full pointer-events-none object-cover"
+                      />
+                    ) : (
+                      <span className="font-bold">
+                        {actorName?.charAt(0)?.toUpperCase()}
+                      </span>
+                    )}
+
+                    <span className="absolute bottom-0 right-0 flex h-6 w-6 items-center justify-center rounded-full border border-black bg-white text-black">
+                      {getNotificationIcon(notification.type)}
+                    </span>
+                  </Link>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words font-bold">
+                      <ActorName actor={actor} />{" "}
+                      <span>{getNotificationActionText(notification.type)}</span>
+                    </p>
+
+                    <p className="mt-1 text-sm text-white/45">
+                      <TimeAgo date={notification.created_at} />
+                    </p>
+
+                    {notification.post?.body && (
+                      <Link
+                        href={href}
+                        onClick={() => markOneRead(notification.id)}
+                        className="mt-2 block line-clamp-1 text-sm text-white/45 hover:text-white"
+                      >
+                        “{notification.post.body}”
+                      </Link>
+                    )}
+
+                    {alreadyResponded ? (
+                      <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/55">
+                        You {notification.collab_response} this collaboration.
+                      </p>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            respondToCollab(notification, "accepted")
+                          }
+                          disabled={isCollabWorking}
+                          className="btn btn-primary min-h-10 px-4"
+                        >
+                          <Check size={16} />
+                          {isCollabWorking ? "Working..." : "Accept"}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            respondToCollab(notification, "rejected")
+                          }
+                          disabled={isCollabWorking}
+                          className="btn btn-danger min-h-10 px-4"
+                        >
+                          <X size={16} />
+                          Reject
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {!notification.is_read && (
+                    <span className="mt-5 h-2.5 w-2.5 shrink-0 rounded-full bg-white" />
+                  )}
+                </div>
+              );
+            }
 
             return (
               <Link
@@ -284,11 +440,7 @@ export default function NotificationsClient({
 
                 <div className="min-w-0 flex-1">
                   <p className="break-words font-bold">
-                    <span className="inline-flex max-w-full items-center gap-1 align-middle">
-                      <span className="truncate">{actorName}</span>
-
-                      {actor?.is_verified && <VerifiedBadge size={14} />}
-                    </span>{" "}
+                    <ActorName actor={actor} />{" "}
                     <span>{getNotificationActionText(notification.type)}</span>
                   </p>
 
