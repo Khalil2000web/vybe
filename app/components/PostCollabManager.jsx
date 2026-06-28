@@ -6,6 +6,7 @@ import CollaboratorPicker from "@/app/components/CollaboratorPicker";
 import VerifiedBadge from "@/app/components/VerifiedBadge";
 
 export default function PostCollabManager({
+  supabase,
   postId,
   currentUserId,
   collaborators,
@@ -21,7 +22,7 @@ export default function PostCollabManager({
     setWorking(true);
     setError("");
 
-    const { error: rpcError } = await window.supabaseClient.rpc(
+    const { error: rpcError } = await supabase.rpc(
       "request_post_collaboration",
       {
         p_post_id: postId,
@@ -46,7 +47,7 @@ export default function PostCollabManager({
     setWorking(true);
     setError("");
 
-    const { error: rpcError } = await window.supabaseClient.rpc(
+    const { error: rpcError } = await supabase.rpc(
       "remove_post_collaborator",
       {
         p_post_id: postId,
@@ -65,7 +66,7 @@ export default function PostCollabManager({
   }
 
   return (
-    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
+    <div className="relative z-[220] overflow-visible rounded-[24px] border border-white/10 bg-white/[0.04] p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <p className="font-black">Collaborators</p>
