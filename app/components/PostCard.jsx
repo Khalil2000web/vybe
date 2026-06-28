@@ -1,6 +1,13 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { Dialog, Transition } from "@headlessui/react";
 import { useRouter } from "next/navigation";
@@ -17,12 +24,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import PostCollabHeader from "@/app/components/PostCollabHeader";
+import PostCollabManager from "@/app/components/PostCollabManager";
 import { createClient } from "@/app/lib/supabase/client";
 import CommentsModal from "@/app/components/CommentsModal";
 import TimeAgo from "@/app/components/TimeAgo";
 import PostMediaCarousel from "@/app/components/PostMediaCarousel";
 import PostText from "@/app/components/PostText";
-import VerifiedBadge from "@/app/components/VerifiedBadge";
 
 function getMediaItems(post) {
   const mediaFromTable = Array.isArray(post?.post_media)
@@ -56,16 +64,13 @@ export default function PostCard({
   onSavedChange,
 }) {
   const router = useRouter();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const menuRef = useRef(null);
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const [localPost, setLocalPost] = useState(post);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-
-  const author = localPost.profiles;
-  const mediaItems = useMemo(() => getMediaItems(localPost), [localPost]);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const [likesCount, setLikesCount] = useState(Number(post.likes_count || 0));
   const [commentsCount, setCommentsCount] = useState(
@@ -78,8 +83,12 @@ export default function PostCard({
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
 
-  const [editBody, setEditBody] = useState(localPost.body || "");
+  const [editBody, setEditBody] = useState(post.body || "");
   const [mediaToRemove, setMediaToRemove] = useState([]);
+  const [collaborators, setCollaborators] = useState([]);
+
+  const author = localPost.profiles;
+  const mediaItems = useMemo(() => getMediaItems(localPost), [localPost]);
 
   const isOwner = currentUserId && localPost.user_id === currentUserId;
   const commentsClosed = localPost.comments_status === "closed";
@@ -95,33 +104,65 @@ export default function PostCard({
     setSaved(Boolean(post.is_saved_by_me));
   }, [post]);
 
+  const loadCollaborators = useCallback(async () => {
+    if (!localPost?.id) return;
+
+    const { data } = await supabase
+      .from("post_collaborators")
+      .select(
+        `
+        id,
+        post_id,
+        user_id,
+        status,
+        requested_by,
+        profile:profiles!post_collaborators_user_id_fkey (
+          id,
+          username,
+          display_name,
+          avatar_url,
+          is_verified
+        )
+      `
+      )
+      .eq("post_id", localPost.id)
+      .in("status", ["pending", "accepted"])
+      .order("created_at", { ascending: true });
+
+    setCollaborators(data || []);
+  }, [localPost?.id, supabase]);
+
   useEffect(() => {
-  if (!menuOpen) return;
+    loadCollaborators();
+  }, [loadCollaborators]);
 
-  function handleClickOutside(event) {
-    if (!menuRef.current) return;
+  useEffect(() => {
+    if (!menuOpen) return;
 
-    if (!menuRef.current.contains(event.target)) {
-      setMenuOpen(false);
+    function handleClickOutside(event) {
+      if (!menuRef.current) return;
+
+      if (!menuRef.current.contains(event.target)) {
+        setMenuOpen(false);
+      }
     }
-  }
 
-  function handleEscape(event) {
-    if (event.key === "Escape") {
-      setMenuOpen(false);
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+      }
     }
-  }
 
-  document.addEventListener("mousedown", handleClickOutside);
-  document.addEventListener("touchstart", handleClickOutside);
-  document.addEventListener("keydown", handleEscape);
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    document.addEventListener("keydown", handleEscape);
 
-  return () => {
-    document.removeEventListener("mousedown", handleClickOutside);
-    document.removeEventListener("touchstart", handleClickOutside);
-    document.removeEventListener("keydown", handleEscape);
-  };
-}, [menuOpen]);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpen]);
 
   async function toggleLike() {
     if (!currentUserId) {
@@ -204,28 +245,28 @@ export default function PostCard({
   }
 
   async function deletePost() {
-  if (!isOwner || working) return;
+    if (!isOwner || working) return;
 
-  setWorking(true);
-  setError("");
+    setWorking(true);
+    setError("");
 
-  const response = await fetch(`/api/posts/${localPost.id}`, {
-    method: "DELETE",
-  });
+    const response = await fetch(`/api/posts/${localPost.id}`, {
+      method: "DELETE",
+    });
 
-  const result = await response.json().catch(() => ({}));
+    const result = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
-    setError(result.error || "Failed to delete post.");
-    setWorking(false);
+    if (!response.ok) {
+      setError(result.error || "Failed to delete post.");
+      setWorking(false);
+      setDeleteConfirmOpen(false);
+      return;
+    }
+
     setDeleteConfirmOpen(false);
-    return;
+    onDeleted?.(localPost.id);
+    router.refresh();
   }
-
-  setDeleteConfirmOpen(false);
-  onDeleted?.(localPost.id);
-  router.refresh();
-}
 
   async function toggleCommentsStatus() {
     if (!isOwner || working) return;
@@ -326,36 +367,35 @@ export default function PostCard({
   return (
     <>
       <article
-  className={`card relative overflow-visible p-4 ${
-    menuOpen ? "z-[100]" : "z-0"
-  }`}
->
+        className={`card relative overflow-visible p-4 ${
+          menuOpen ? "z-[100]" : "z-0"
+        }`}
+      >
         <div className="flex items-start justify-between gap-3">
-          <Link
-            href={author?.username ? `/@${author.username}` : "/"}
-            className="flex min-w-0 items-center gap-3"
-          >
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10 font-bold">
+          <div className="flex min-w-0 items-center gap-3">
+            <Link
+              href={author?.username ? `/@${author.username}` : "/"}
+              className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10 font-bold"
+            >
               {author?.avatar_url ? (
                 <img
                   src={author.avatar_url}
                   alt=""
-                  className="h-full w-full object-cover"
+                  className="pointer-events-none h-full w-full object-cover"
                 />
               ) : (
                 (author?.display_name || author?.username || "?")
                   ?.charAt(0)
                   ?.toUpperCase()
               )}
-            </div>
+            </Link>
 
             <div className="min-w-0">
               <p className="flex min-w-0 items-center gap-1 font-bold">
-                <span className="truncate">
-                  {author?.display_name || author?.username || "Unknown"}
-                </span>
-
-                {author?.is_verified && <VerifiedBadge size={15} />}
+                <PostCollabHeader
+                  author={author}
+                  collaborators={collaborators}
+                />
               </p>
 
               <p className="truncate text-sm text-white/40">
@@ -365,7 +405,7 @@ export default function PostCard({
                 {commentsClosed && " · Comments closed"}
               </p>
             </div>
-          </Link>
+          </div>
 
           <div ref={menuRef} className="relative z-[120]">
             <button
@@ -376,7 +416,8 @@ export default function PostCard({
             </button>
 
             {menuOpen && (
-<div className="absolute right-0 top-11 z-[9999] w-56 overflow-hidden rounded-[22px] border border-white/10 bg-black/95 p-2 shadow-2xl backdrop-blur-2xl">                <button
+              <div className="absolute right-0 top-11 z-[9999] w-56 overflow-hidden rounded-[22px] border border-white/10 bg-black/95 p-2 shadow-2xl backdrop-blur-2xl">
+                <button
                   onClick={sharePost}
                   className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm hover:bg-white/10"
                 >
@@ -407,9 +448,9 @@ export default function PostCard({
 
                     <button
                       onClick={() => {
-  setMenuOpen(false);
-  setDeleteConfirmOpen(true);
-}}
+                        setMenuOpen(false);
+                        setDeleteConfirmOpen(true);
+                      }}
                       className="flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm text-red-200 hover:bg-red-500/10"
                     >
                       <Trash2 size={16} />
@@ -422,7 +463,17 @@ export default function PostCard({
           </div>
         </div>
 
-        <PostText text={localPost.body} />
+        {localPost.body && (
+          <p className="mt-4 whitespace-pre-wrap break-words text-white/85">
+            <Link
+              href={author?.username ? `/@${author.username}` : "/"}
+              className="font-black text-white hover:underline"
+            >
+              {author?.display_name || author?.username || "Unknown"}
+            </Link>{" "}
+            <PostText text={localPost.body} inline />
+          </p>
+        )}
 
         <PostMediaCarousel post={localPost} />
 
@@ -530,7 +581,7 @@ export default function PostCard({
                       </Dialog.Title>
 
                       <p className="mt-1 text-sm text-white/45">
-                        You can edit text or delete images only.
+                        Edit text, images, comments, and collaborators.
                       </p>
                     </div>
 
@@ -543,17 +594,27 @@ export default function PostCard({
                   </div>
 
                   <div className="relative z-[210] mt-5 space-y-4 overflow-visible">
-<PostComposerTextarea
-  className="field min-h-32 resize-none"
-  value={editBody}
-  onChange={setEditBody}
-  maxLength={500}
-  placeholder="Edit your post..."
-/>
+                    <PostComposerTextarea
+                      className="field min-h-50 resize-none"
+                      value={editBody}
+                      onChange={setEditBody}
+                      maxLength={500}
+                      placeholder="Edit your post..."
+                    />
 
                     <p className="text-right text-xs text-white/35">
                       {editBody.length}/500
                     </p>
+
+                    {isOwner && (
+                      <PostCollabManager
+                        supabase={supabase}
+                        postId={localPost.id}
+                        currentUserId={currentUserId}
+                        collaborators={collaborators}
+                        onChanged={loadCollaborators}
+                      />
+                    )}
 
                     {mediaItems.length > 0 && (
                       <div>
@@ -580,14 +641,14 @@ export default function PostCard({
                                 {item.media_type === "video" ? (
                                   <video
                                     src={item.media_url}
-                                    className="h-full w-full object-cover"
+                                    className="pointer-events-none h-full w-full object-cover"
                                     muted
                                   />
                                 ) : (
                                   <img
                                     src={item.media_url}
                                     alt=""
-                                    className="h-full w-full object-cover"
+                                    className="pointer-events-none h-full w-full object-cover"
                                   />
                                 )}
 
@@ -622,19 +683,19 @@ export default function PostCard({
         </Dialog>
       </Transition>
 
-<ConfirmDialog
-  open={deleteConfirmOpen}
-  onClose={() => {
-    if (!working) setDeleteConfirmOpen(false);
-  }}
-  onConfirm={deletePost}
-  loading={working}
-  title="Delete post?"
-  description="This post, its images, likes, comments, saves, hashtags, and mentions will be removed. This cannot be undone."
-  confirmText="Delete post"
-  cancelText="Keep post"
-  danger
-/>
+      <ConfirmDialog
+        open={deleteConfirmOpen}
+        onClose={() => {
+          if (!working) setDeleteConfirmOpen(false);
+        }}
+        onConfirm={deletePost}
+        loading={working}
+        title="Delete post?"
+        description="This post, its images, likes, comments, saves, hashtags, and mentions will be removed. This cannot be undone."
+        confirmText="Delete post"
+        cancelText="Keep post"
+        danger
+      />
     </>
   );
 }
