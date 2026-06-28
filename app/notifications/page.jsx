@@ -24,7 +24,7 @@ export default async function NotificationsPage() {
     redirect("/auth/signup");
   }
 
-  const { data: notifications } = await supabase
+  const { data: notificationsData } = await supabase
     .from("notifications")
     .select(
       `
@@ -47,6 +47,42 @@ export default async function NotificationsPage() {
     .eq("user_id", currentProfile.id)
     .order("created_at", { ascending: false })
     .limit(80);
+
+  let notifications = notificationsData || [];
+
+  const collabPostIds = notifications
+    .filter(
+      (notification) =>
+        notification.type === "collab_request" && notification.post_id
+    )
+    .map((notification) => notification.post_id);
+
+  if (collabPostIds.length > 0) {
+    const { data: collaborations } = await supabase
+      .from("post_collaborators")
+      .select("post_id, status")
+      .eq("user_id", currentProfile.id)
+      .in("post_id", collabPostIds);
+
+    const collaborationStatusByPostId = new Map(
+      (collaborations || []).map((row) => [row.post_id, row.status])
+    );
+
+    notifications = notifications.map((notification) => {
+      if (notification.type !== "collab_request") {
+        return notification;
+      }
+
+      const status = collaborationStatusByPostId.get(notification.post_id);
+
+      return {
+        ...notification,
+        collab_status: status || "pending",
+        collab_response:
+          status && status !== "pending" ? status : null,
+      };
+    });
+  }
 
   let followRequests = [];
 
@@ -75,7 +111,7 @@ export default async function NotificationsPage() {
   return (
     <AppShell profile={currentProfile}>
       <NotificationsClient
-        initialNotifications={notifications || []}
+        initialNotifications={notifications}
         initialFollowRequests={followRequests}
         currentProfile={currentProfile}
       />
