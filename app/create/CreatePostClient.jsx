@@ -13,6 +13,7 @@ import {
   Unlock,
 } from "lucide-react";
 import PostComposerTextarea from "@/app/components/PostComposerTextarea";
+import CollaboratorPicker from "@/app/components/CollaboratorPicker";
 
 const MAX_IMAGES = 10;
 const MAX_IMAGE_SIZE = 6 * 1024 * 1024;
@@ -83,6 +84,7 @@ export default function CreatePostClient({ profile }) {
   const router = useRouter();
   const supabase = createClient();
   const dragRef = useRef(null);
+  const [selectedCollaborator, setSelectedCollaborator] = useState(null);
 
   const [body, setBody] = useState("");
   const [visibility, setVisibility] = useState("public");
@@ -246,46 +248,64 @@ export default function CreatePostClient({ profile }) {
     return uploaded;
   }
 
-  async function createPost(e) {
-    e.preventDefault();
+async function createPost(e) {
+  e.preventDefault();
 
-    if (!canPost || posting) return;
+  if (!canPost || posting) return;
 
-    setPosting(true);
-    setError("");
+  setPosting(true);
+  setError("");
 
-    try {
-      const uploadedMedia = await uploadImages();
+  try {
+    const uploadedMedia = await uploadImages();
 
-      const response = await fetch("/api/posts/create", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          body: body.trim() || null,
-          media: uploadedMedia,
-          visibility,
-        }),
-      });
+    const response = await fetch("/api/posts/create", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        body: body.trim() || null,
+        media: uploadedMedia,
+        visibility,
+      }),
+    });
 
-      const result = await response.json().catch(() => ({}));
+    const result = await response.json().catch(() => ({}));
 
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to create post.");
-      }
-
-      for (const item of items) {
-        if (item.preview) URL.revokeObjectURL(item.preview);
-      }
-
-      router.push("/");
-      router.refresh();
-    } catch (err) {
-      setError(err.message || "Failed to create post.");
-      setPosting(false);
+    if (!response.ok) {
+      throw new Error(result.error || "Failed to create post.");
     }
+
+    if (selectedCollaborator?.username && result?.post?.id) {
+      const { error: collabError } = await supabase.rpc(
+        "request_post_collaboration",
+        {
+          p_post_id: result.post.id,
+          p_collaborator_username: selectedCollaborator.username,
+        }
+      );
+
+      if (collabError) {
+        setError(
+          `Post created, but collab request failed: ${collabError.message}`
+        );
+        setPosting(false);
+        return;
+      }
+    }
+
+    for (const item of items) {
+      if (item.preview) URL.revokeObjectURL(item.preview);
+    }
+
+    router.push("/");
+    router.refresh();
+  } catch (err) {
+    setError(err.message || "Failed to create post.");
+    setPosting(false);
   }
+}
 
   return (
     <main className="container-page">
@@ -303,40 +323,46 @@ export default function CreatePostClient({ profile }) {
 
       <form onSubmit={createPost} className="space-y-5">
         <section className="card relative z-[80] overflow-visible p-4">
-          <div className="flex gap-3">
-            <Link
-              href={`/@${profile.username}`}
-              className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10"
-            >
-              {profile.avatar_url ? (
-                <img
-                  src={profile.avatar_url}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <span className="font-bold">
-                  {(profile.display_name || profile.username)
-                    ?.charAt(0)
-                    ?.toUpperCase()}
-                </span>
-              )}
-            </Link>
+<div className="flex gap-3">
+  <Link
+    href={`/@${profile.username}`}
+    className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-white/10"
+  >
+    {profile.avatar_url ? (
+      <img
+        src={profile.avatar_url}
+        alt=""
+        className="h-full w-full object-cover"
+      />
+    ) : (
+      <span className="font-bold">
+        {(profile.display_name || profile.username)?.charAt(0)?.toUpperCase()}
+      </span>
+    )}
+  </Link>
 
-            <div className="min-w-0 flex-1">
-<PostComposerTextarea
-  className="field min-h-45 resize-none"
-  value={body}
-  onChange={setBody}
-  maxLength={500}
-  placeholder="Write something..."
-/>
+  <div className="min-w-0 flex-1">
+    <PostComposerTextarea
+      className="field min-h-45 resize-none"
+      value={body}
+      onChange={setBody}
+      maxLength={500}
+      placeholder="Write something..."
+    />
 
-              <p className="mt-2 text-right text-xs text-white/35">
-                {body.length}/500
-              </p>
-            </div>
-          </div>
+    <p className="mt-2 text-right text-xs text-white/35">
+      {body.length}/500
+    </p>
+  </div>
+</div>
+
+<div className="mt-4">
+  <CollaboratorPicker
+    currentUserId={profile?.id}
+    selected={selectedCollaborator}
+    onSelect={setSelectedCollaborator}
+  />
+</div>
         </section>
 
 <section className="card relative z-[20] p-4">
