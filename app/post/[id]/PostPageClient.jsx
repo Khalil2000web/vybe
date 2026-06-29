@@ -99,7 +99,7 @@ export default function PostPageClient({
 
   return (
     <main className="container-page">
-      <div className="sticky top-[65px] z-30 mb-4 rounded-full border border-white/10 bg-black/65 px-4 py-3 backdrop-blur-2xl">
+      <div className="sticky top-[75px] z-30 mb-4 rounded-full border border-white/10 bg-black/65 px-4 py-3 backdrop-blur-2xl">
         <div className="flex items-center justify-between gap-3">
           <Link
             href={author?.username ? `/@${author.username}` : "/"}
