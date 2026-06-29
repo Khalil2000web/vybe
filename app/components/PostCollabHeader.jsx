@@ -33,7 +33,7 @@ export default function PostCollabHeader({ author, collaborators = [] }) {
           {author?.is_verified && <VerifiedBadge size={15} />}
         </Link>
 
-        <span className="text-white/35">+</span>
+        <span className="text-white/80">+</span>
 
         <Link
           href={firstCollaborator?.username ? `/@${firstCollaborator.username}` : "/"}
