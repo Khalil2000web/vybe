@@ -464,10 +464,10 @@ export default function PostCard({
         </div>
 
         {localPost.body && (
-          <p className="mt-4 whitespace-pre-wrap break-words text-white/85">
+          <p className="hidden mt-4 whitespace-pre-wrap break-words text-white/85">
             <Link
               href={author?.username ? `/@${author.username}` : "/"}
-              className="hidden font-black text-white hover:underline"
+              className="font-black text-white hover:underline"
             >
               {author?.display_name || author?.username || "Unknown"}
             </Link>{" "}
